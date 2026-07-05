@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenTrickler ML Firmware</title>
+  <meta name="description" content="Private beta documentation for the OpenTrickler RP2040 and RP2350 ML firmware branch.">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav-wrap" aria-label="Primary navigation">
+      <a class="brand" href="#top" aria-label="OpenTrickler ML Firmware home">
+        <span class="brand-mark">OT</span>
+        <span>
+          <strong>OpenTrickler ML Firmware</strong>
+          <small>RP2040 / RP2350 private beta</small>
+        </span>
+      </a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#profiles">Profiles</a>
+        <a href="#characterization">Characterization</a>
+        <a href="#calibration">Calibration</a>
+        <a href="#api">REST API</a>
+        <a href="#build">Build</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero section-band">
+      <div class="section-inner hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">Current private beta: 2026.06.16-beta.8</p>
+          <h1>Adaptive OpenTrickler firmware for profile-aware powder flow learning.</h1>
+          <p class="lede">
+            This branch adds flow characterization, machine calibration, runtime learning, steering controls,
+            REST status endpoints, and OTA staging to the OpenTrickler RP2040/RP2350 controller.
+          </p>
+          <div class="hero-actions" aria-label="Page shortcuts">
+            <a class="button primary" href="#install">Flash firmware</a>
+            <a class="button secondary" href="#characterization">Run characterization</a>
+          </div>
+          <dl class="hero-stats" aria-label="Firmware summary">
+            <div><dt>Targets</dt><dd>Pico W, Pico 2 W</dd></div>
+            <div><dt>Interface</dt><dd>Mini 12864, Wi-Fi, REST</dd></div>
+            <div><dt>Status</dt><dd>Early private beta</dd></div>
+          </dl>
+        </div>
+        <figure class="device-panel">
+          <img src="assets/img/main_menu_screen_mirror.png" alt="OpenTrickler mini 12864 main menu screen">
+          <figcaption>
+            The controller still runs the familiar OpenTrickler workflow, with a learned model layered around
+            charge timing, handoff, finish, and recovery behavior.
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="notice-band">
+      <div class="section-inner notice-grid">
+        <div>
+          <h2>Early Beta Warning</h2>
+          <p>
+            This firmware controls reloading equipment. Verify every charge with a calibrated scale, supervise
+            all motor activity, and keep a known-good UF2 available for rollback.
+          </p>
+        </div>
+        <div>
+          <h2>Private For Now</h2>
+          <p>
+            Keep the repository private while firmware behavior, safety notes, and release packaging are being
+            reviewed. Do not enable public GitHub Pages until the beta is ready for external release.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="section-band">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="eyebrow">What changed</p>
+          <h2>Different From Original OpenTrickler Firmware</h2>
+          <p>
+            This branch keeps the normal OpenTrickler charge flow, display workflow, scale support, and motor
+            control foundation, then adds an adaptive model that can be characterized, calibrated, saved, and
+            gently steered per profile.
+          </p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card">
+            <h3>Profile AI model</h3>
+            <p>Each profile can store learned flow, tail, confidence, machine timing, steering, and recovery behavior.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Flow characterization</h3>
+            <p>Measures coarse, trim, fine, and micro-recovery delivery to build a model for the selected setup.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Machine calibration</h3>
+            <p>Captures scale response, settle behavior, open-loop flow, and handoff margins after a model exists.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Runtime learning</h3>
+            <p>Normal throws refine the model using final error, phase timing, stop weights, recovery time, and stalls.</p>
+          </article>
+          <article class="feature-card">
+            <h3>User steering</h3>
+            <p>Faster, Safer, Fine Finish Faster, Bulk Closer, and Undo Last actions bias a saved model carefully.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Two-stage recovery</h3>
+            <p>Beta 8 splits recovery into <code>fine_recover</code> and <code>micro_heal</code> so small underthrows continue healing.</p>
+          </article>
+          <article class="feature-card">
+            <h3>REST and OTA</h3>
+            <p>Status, tuning, steering, charge state, system info, and OTA staging are available over Wi-Fi.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Clean beta repo</h3>
+            <p>Private logs, raw captures, collector tooling, generated binaries, and comparison dumps are excluded.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="hardware" class="section-band alt">
+      <div class="section-inner two-column">
+        <div>
+          <p class="eyebrow">Compatibility</p>
+          <h2>Hardware And Scale Support</h2>
+          <p>
+            The codebase builds for Raspberry Pi Pico W and Pico 2 W boards and targets OpenTrickler controller
+            hardware with stepper-driven coarse/fine tricklers, optional servo gate, NeoPixel status, and the
+            mini 12864 display.
+          </p>
+          <ul class="check-list">
+            <li>2.4 GHz Wi-Fi only, with AP mode for first-time setup.</li>
+            <li>Supported scale drivers include AND FX-i, Steinberg SBS, G&amp;G/JJB, US Solid JFDBS, JM Science, Creedmoor, Radwag PS R2, Sartorius, Generic, and Ohaus PR.</li>
+            <li>Scale serial formats include 4800, 9600, and 19200 baud with 8N1 or 7N1 framing.</li>
+            <li>Use a separate profile when powder, tube setup, scale, gate, target range, or mechanical behavior changes.</li>
+          </ul>
+        </div>
+        <figure class="wide-figure">
+          <img src="assets/img/open_trickler_control_flow.png" alt="OpenTrickler firmware control-flow diagram">
+          <figcaption>Firmware behavior remains bounded by the charge loop, scale feedback, safety timeouts, and user prompts.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="install" class="section-band">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="eyebrow">Get running</p>
+          <h2>Install And First Boot</h2>
+          <p>
+            Use USB flashing for first install, recovery, and rollback. Use OTA only after the device is already
+            running firmware that supports OTA staging.
+          </p>
+        </div>
+        <div class="step-grid">
+          <article class="step-card">
+            <span class="step-number">1</span>
+            <h3>Disconnect motor power</h3>
+            <p>Remove the controller from 12/24 V motor power before attaching USB.</p>
+          </article>
+          <article class="step-card">
+            <span class="step-number">2</span>
+            <h3>Enter BOOTSEL</h3>
+            <p>Hold BOOTSEL on the Pico W or Pico 2 W while connecting micro USB.</p>
+          </article>
+          <article class="step-card">
+            <span class="step-number">3</span>
+            <h3>Copy UF2</h3>
+            <p>Copy <code>app.uf2</code> to the RPI-RP2 drive. The board disconnects and reboots automatically.</p>
+          </article>
+          <article class="step-card">
+            <span class="step-number">4</span>
+            <h3>Verify version</h3>
+            <p>Open the web portal or REST system information and confirm the expected release string.</p>
+          </article>
+        </div>
+        <div class="image-strip" aria-label="Firmware update screenshots">
+          <figure>
+            <img src="assets/img/firmware/pico-top-plug.png" alt="Micro USB connected to the Pico board">
+            <figcaption>Connect USB</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/img/firmware/bootsel.png" alt="BOOTSEL button on the Pico board">
+            <figcaption>Hold BOOTSEL</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/img/firmware/file_manager.png" alt="RPI-RP2 file manager drive">
+            <figcaption>Copy UF2</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section id="wifi" class="section-band alt">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="eyebrow">Network setup</p>
+          <h2>Connect To Wi-Fi</h2>
+          <p>
+            On first boot, the controller starts its own access point. Configure a 2.4 GHz network from a laptop
+            or phone, then use the assigned LAN address for the web portal, REST API, and OTA.
+          </p>
+        </div>
+        <div class="timeline">
+          <div class="timeline-row">
+            <strong>AP mode</strong>
+            <span>Look for an OpenTrickler SSID with a device-specific suffix. Default password: <code>opentrickler</code>.</span>
+          </div>
+          <div class="timeline-row">
+            <strong>Setup portal</strong>
+            <span>After joining the AP, browse to <code>http://192.168.4.1</code> and enter 2.4 GHz Wi-Fi credentials.</span>
+          </div>
+          <div class="timeline-row">
+            <strong>Station mode</strong>
+            <span>After reboot, the display or portal shows the LAN address. The onboard LED is solid when connected.</span>
+          </div>
+        </div>
+        <div class="image-strip" aria-label="Wireless setup screenshots">
+          <figure>
+            <img src="assets/img/wireless/ap_mode_view.png" alt="AP mode status screen">
+            <figcaption>AP mode</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/img/wireless/look_for_ssid.png" alt="Wi-Fi network list with OpenTrickler SSID">
+            <figcaption>Select SSID</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/img/wireless/setup_wizard.png" alt="OpenTrickler wireless setup wizard">
+            <figcaption>Save Wi-Fi</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/img/wireless/sta_mode_view.png" alt="Station mode status screen with IP address">
+            <figcaption>Use LAN address</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section id="profiles" class="section-band">
+      <div class="section-inner two-column">
+        <div>
+          <p class="eyebrow">Profiles first</p>
+          <h2>Create The Right Profile</h2>
+          <p>
+            Profiles are the boundary around learned behavior. Keep separate profiles for different powders,
+            tube geometries, scale setups, gate behavior, and target ranges whenever practical.
+          </p>
+          <ol class="ordered-list">
+            <li>Open the web portal or local controller UI.</li>
+            <li>Go to Settings and choose a profile slot.</li>
+            <li>Name the profile for the powder/setup, such as <code>Varget 36.5</code> or <code>H4350 short tube</code>.</li>
+            <li>Copy or enter trusted baseline motor settings.</li>
+            <li>Save the profile before characterization.</li>
+            <li>Confirm the selected profile before every production run.</li>
+          </ol>
+        </div>
+        <div class="data-panel">
+          <div>
+            <h3>Use a new profile when</h3>
+            <p>Powder, tube, scale, target range, gate, or mechanical behavior changes enough to affect flow.</p>
+          </div>
+          <div>
+            <h3>Re-characterize when</h3>
+            <p>The saved model no longer matches real throws, or after meaningful hardware or scale changes.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="characterization" class="section-band alt">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="eyebrow">AI tuning workflow</p>
+          <h2>Run Characterization</h2>
+          <p>
+            Characterization measures how this machine, this powder, this tube setup, and this scale behave.
+            It builds a working model and waits for you to save it to the selected profile.
+          </p>
+        </div>
+        <div class="workflow-grid">
+          <article>
+            <h3>1. Prepare</h3>
+            <p>Fill the hopper, confirm the tube and gate setup, connect the scale, warm up the scale, and verify zero.</p>
+          </article>
+          <article>
+            <h3>2. Select profile</h3>
+            <p>Open Settings, AI Tuning, select the correct profile, and enter the normal target charge weight.</p>
+          </article>
+          <article>
+            <h3>3. Start</h3>
+            <p>Start characterization and follow the normal remove/return pan prompts without changing the setup.</p>
+          </article>
+          <article>
+            <h3>4. Sample</h3>
+            <p>The firmware samples coarse, trim, fine, and recovery behavior while tracking delivered weight and tail.</p>
+          </article>
+          <article>
+            <h3>5. Review</h3>
+            <p>Wait for the tuner state to reach <code>ready_to_save</code>; cancel and rerun if the scale or powder flow was unstable.</p>
+          </article>
+          <article>
+            <h3>6. Save</h3>
+            <p>Apply/save the model to the selected profile. The model persists in flash and becomes available for production.</p>
+          </article>
+        </div>
+        <div class="data-panel">
+          <div>
+            <h3>Good characterization inputs</h3>
+            <p>Stable scale, repeatable pan handling, clean tube flow, correct target weight, and the same setup you plan to use for production.</p>
+          </div>
+          <div>
+            <h3>Discard and rerun if</h3>
+            <p>The scale drifts, powder bridges, the wrong profile is selected, the pan workflow is interrupted, or the model obviously learned from bad samples.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="calibration" class="section-band">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="eyebrow">Machine timing</p>
+          <h2>Run Machine Calibration</h2>
+          <p>
+            Calibration should be run after a characterization model has been saved. It measures the machine
+            behavior that affects handoff timing and final recovery.
+          </p>
+        </div>
+        <div class="step-grid">
+          <article class="step-card">
+            <span class="step-number">1</span>
+            <h3>Save model first</h3>
+            <p>Machine calibration requires an existing saved characterization model for the selected profile.</p>
+          </article>
+          <article class="step-card">
+            <span class="step-number">2</span>
+            <h3>Keep setup fixed</h3>
+            <p>Use the same powder, tube, scale, pan, and target range as characterization.</p>
+          </article>
+          <article class="step-card">
+            <span class="step-number">3</span>
+            <h3>Start calibration</h3>
+            <p>Start from the AI Tuning panel and let the controller complete the planned timing samples.</p>
+          </article>
+          <article class="step-card">
+            <span class="step-number">4</span>
+            <h3>Save and verify</h3>
+            <p>Save the completed calibration, then run supervised production charges before relying on it.</p>
+          </article>
+        </div>
+        <div class="data-panel">
+          <div>
+            <h3>What it measures</h3>
+            <p>Scale sample period, response latency, settle time, coarse tail, fine tail, open-loop flow, and bulk handoff margin.</p>
+          </div>
+          <div>
+            <h3>When to rerun</h3>
+            <p>After changing scale, tube, powder behavior, gate geometry, major motor settings, or when handoff and recovery feel wrong.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="steering" class="section-band alt">
+      <div class="section-inner two-column">
+        <div>
+          <p class="eyebrow">Production refinement</p>
+          <h2>Steering And Runtime Learning</h2>
+          <p>
+            Runtime learning happens during normal throws. Steering lets you add a small human preference on top
+            of the saved model, then observe whether the machine becomes faster or safer in real operation.
+          </p>
+          <ul class="check-list">
+            <li>Use one steering action at a time.</li>
+            <li>Run enough charges to see a pattern before steering again.</li>
+            <li>Prefer Safer if overthrows or unstable tails appear.</li>
+            <li>Use Undo Last when a steering step makes behavior worse.</li>
+            <li>Re-characterize if the setup no longer behaves like the saved model.</li>
+          </ul>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Action</th>
+                <th>Use when</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Faster</td><td>Charges are consistently safe but slower than needed.</td></tr>
+              <tr><td>Safer</td><td>Overthrows, heavy tails, or unstable finishing appear.</td></tr>
+              <tr><td>Fine Finish Faster</td><td>Bulk handoff is good, but fine finishing is too slow.</td></tr>
+              <tr><td>Bulk Closer</td><td>Coarse/bulk handoff is too conservative and leaves too much for fine.</td></tr>
+              <tr><td>Undo Last</td><td>The most recent steering step made behavior worse.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="usage" class="section-band">
+      <div class="section-inner two-column">
+        <div>
+          <p class="eyebrow">Daily operation</p>
+          <h2>Throwing Charges</h2>
+          <ol class="ordered-list">
+            <li>Select the correct profile.</li>
+            <li>Enter the target charge weight in grains.</li>
+            <li>Place the pan on the scale and wait for zero.</li>
+            <li>Let the controller charge, settle, recover if needed, and request cup removal.</li>
+            <li>Remove the pan only when prompted.</li>
+            <li>Verify the charge independently before use.</li>
+            <li>Return the pan for the next cycle.</li>
+          </ol>
+        </div>
+        <div class="image-strip compact" aria-label="Charge workflow screenshots">
+          <figure>
+            <img src="assets/img/select_weight_screen_mirror.png" alt="Target charge weight screen">
+            <figcaption>Select weight</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/img/wait_for_charge_screen_mirror.png" alt="Wait for charge screen">
+            <figcaption>Charge</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/img/wait_for_cup_removal.png" alt="Wait for cup removal screen">
+            <figcaption>Remove pan</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section id="api" class="section-band alt">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="eyebrow">Integration surface</p>
+          <h2>REST API Highlights</h2>
+          <p>
+            The web portal and OTA uploader use the controller REST API. These endpoints are useful for firmware
+            verification, support tooling, and local automation.
+          </p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Endpoint</th>
+                <th>Purpose</th>
+                <th>Key parameters</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>/rest/ai_tuning_start</td><td>Start characterization and enter charge mode.</td><td>profile_idx, target</td></tr>
+              <tr><td>/rest/ai_machine_calibration_start</td><td>Run machine timing calibration after a saved model exists.</td><td>profile_idx, target</td></tr>
+              <tr><td>/rest/ai_tuning_status</td><td>Read active state, plan, last drop, working model, and saved model.</td><td>profile_idx</td></tr>
+              <tr><td>/rest/ai_tuning_apply</td><td>Save the completed working model to the selected profile.</td><td>none</td></tr>
+              <tr><td>/rest/ai_steering</td><td>Bias a saved model toward a selected behavior.</td><td>profile_idx, action</td></tr>
+              <tr><td>/rest/ai_tuning_history</td><td>Read saved model samples and runtime observations.</td><td>profile_idx</td></tr>
+              <tr><td>/rest/ai_tuning_config</td><td>Read AI budgets, sample counts, target, noise, and cost weights.</td><td>none</td></tr>
+              <tr><td>/rest/charge_mode_state</td><td>Read live charge state, weight, events, phases, and telemetry.</td><td>none</td></tr>
+              <tr><td>/rest/system_control</td><td>Read system and firmware information.</td><td>none</td></tr>
+              <tr><td>/rest/ota_status</td><td>Report OTA support, staging capacity, and staged-image metadata.</td><td>none</td></tr>
+              <tr><td>/rest/ota_begin, /rest/ota_chunk, /rest/ota_finalize, /rest/ota_apply</td><td>Stage, verify, and apply <code>app.bin</code> over Wi-Fi.</td><td>size, crc32, offset, data</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <pre class="code-block"><code>python tools/ota_upload.py --host &lt;device-ip-or-hostname&gt; --bin build-pico2w-release/app.bin --apply</code></pre>
+      </div>
+    </section>
+
+    <section id="build" class="section-band">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="eyebrow">Developer setup</p>
+          <h2>Build From Source</h2>
+          <p>
+            Use the Raspberry Pi Pico SDK toolchain, CMake, Ninja, Git, Python 3, and repository submodules.
+            The Pico 2 W release build is the current beta baseline.
+          </p>
+        </div>
+        <div class="command-grid">
+          <div>
+            <h3>Clone and submodules</h3>
+            <pre><code>git clone https://github.com/jeanphilippebellavance-cmd/Opentrickler_ML.git
+cd Opentrickler_ML
+git submodule update --init --recursive</code></pre>
+          </div>
+          <div>
+            <h3>Configure Pico 2 W release</h3>
+            <pre><code>.\configure_env.ps1
+cmake -B build-pico2w-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DPICO_BOARD=pico2_w</code></pre>
+          </div>
+          <div>
+            <h3>Build firmware</h3>
+            <pre><code>cmake --build build-pico2w-release --config Release</code></pre>
+          </div>
+          <div>
+            <h3>Configure Pico W release</h3>
+            <pre><code>.\configure_env.ps1
+cmake -B build-picow-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DPICO_BOARD=pico_w</code></pre>
+          </div>
+        </div>
+        <p class="small-note">
+          Build outputs are ignored by git. Use <code>app.uf2</code> for USB flashing and <code>app.bin</code> for OTA upload.
+        </p>
+      </div>
+    </section>
+
+    <section id="release" class="section-band alt">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="eyebrow">Release status</p>
+          <h2>2026.06.16-beta.8</h2>
+          <p>
+            Beta 8 focuses on recovery split behavior, safer coarse top-up, and cleaner separation between fast
+            fine tail and active recovery delivery.
+          </p>
+        </div>
+        <div class="release-grid">
+          <article>
+            <h3>Changes</h3>
+            <ul>
+              <li>Split final recovery into <code>fine_recover</code> and <code>micro_heal</code> zones.</li>
+              <li>Reduced coarse top-up pulse count, duration, and desired drop size.</li>
+              <li>Preserved fine tail telemetry instead of overwriting it with recovery delivery.</li>
+              <li>Widened final-weight plausibility limits so severe overcharges remain visible to learning.</li>
+              <li>Adjusted runtime learning so recovery underthrows increase recovery authority.</li>
+            </ul>
+          </article>
+          <article>
+            <h3>Expected behavior</h3>
+            <ul>
+              <li>Small underthrows continue healing instead of asking for cup removal.</li>
+              <li>Recovery settles and re-checks rather than driving directly to exact target.</li>
+              <li>Coarse top-up improves speed with less risk of jumping past target.</li>
+              <li>Future learning distinguishes passive tail from intentional recovery feed.</li>
+            </ul>
+          </article>
+          <article>
+            <h3>Test status</h3>
+            <ul>
+              <li>Pico 2 W release build passes locally.</li>
+              <li>Private OTA verification was completed during beta testing.</li>
+              <li>Device-reported version matched <code>2026.06.16-beta.8</code> after reboot.</li>
+              <li>Additional powder verification remains tracked in the issue ledger.</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="repo" class="section-band">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="eyebrow">Repository map</p>
+          <h2>Where Things Live</h2>
+        </div>
+        <div class="repo-grid">
+          <div><code>.github/workflows/</code><span>Firmware build automation for Pico W and Pico 2 W.</span></div>
+          <div><code>docs/</code><span>This GitHub Pages-ready private beta documentation site.</span></div>
+          <div><code>firmware_release_history/</code><span>Public-safe changelog, issue ledger, and release notes only.</span></div>
+          <div><code>library/</code><span>Embedded library and submodule content used by the firmware.</span></div>
+          <div><code>manuals/</code><span>Original flashing, wireless, and scale setup material.</span></div>
+          <div><code>resources/</code><span>Screenshots and diagrams used by docs and manuals.</span></div>
+          <div><code>scripts/</code><span>Development helper scripts.</span></div>
+          <div><code>src/</code><span>Firmware source, REST endpoints, web portal, drivers, charge mode, OTA, and AI model code.</span></div>
+          <div><code>targets/</code><span>Board and hardware target support.</span></div>
+          <div><code>tests/</code><span>Local firmware tests and validation material.</span></div>
+          <div><code>tools/ota_upload.py</code><span>Wi-Fi OTA uploader for <code>app.bin</code> images.</span></div>
+          <div><code>RELEASE_VERSION</code><span>Single-file release identity consumed by the version generator.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="excluded" class="section-band alt">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="eyebrow">Repository hygiene</p>
+          <h2>What Is Not Published Here</h2>
+          <p>
+            This repository is for firmware source and public-safe documentation. Local testing evidence remains
+            outside the Git history unless it is deliberately prepared for release.
+          </p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card">
+            <h3>No raw telemetry</h3>
+            <p>Private flight logs, charge CSVs, REST captures, and local test-session folders are ignored.</p>
+          </article>
+          <article class="feature-card">
+            <h3>No collector app</h3>
+            <p>The field data collector source, packages, and packaging scripts are not part of this GitHub repo.</p>
+          </article>
+          <article class="feature-card">
+            <h3>No generated binaries</h3>
+            <p>Firmware binaries are produced by local builds or GitHub Actions, not committed to release history.</p>
+          </article>
+          <article class="feature-card">
+            <h3>No private network details</h3>
+            <p>Personal LAN addresses and private session paths are removed from user-facing documentation.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="section-inner footer-grid">
+      <p>OpenTrickler ML Firmware private beta documentation.</p>
+      <p>Keep private until beta behavior, safety notes, and release packaging are reviewed.</p>
+    </div>
+  </footer>
+</body>
+</html>

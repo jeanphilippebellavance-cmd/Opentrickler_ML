@@ -1,0 +1,3167 @@
+<!DOCTYPE html>
+<html data-theme="opentrickler">
+
+<head>
+    <meta charset="UTF-8">
+    <title>OpenTrickler Web Controller</title>
+
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.7.3/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0 viewport-fit=cover">
+    <link rel="icon" href="https://raw.githubusercontent.com/eamars/OpenTrickler/main/Resources/favicon.ico">
+
+    <style>
+        :root,
+        [data-theme="opentrickler"] {
+            color-scheme: light;
+
+            /* DaisyUI theme tokens: warm bench-instrument palette. */
+            --p: 61% 0.118 75;
+            --pc: 18% 0.035 60;
+            --s: 47% 0.046 228;
+            --sc: 96% 0.01 230;
+            --a: 54% 0.075 178;
+            --ac: 97% 0.02 180;
+            --n: 25% 0.02 72;
+            --nc: 96% 0.013 78;
+            --b1: 96% 0.018 78;
+            --b2: 91% 0.024 78;
+            --b3: 84% 0.032 75;
+            --bc: 23% 0.024 72;
+            --in: 48% 0.055 224;
+            --inc: 97% 0.01 225;
+            --su: 50% 0.105 145;
+            --suc: 97% 0.02 145;
+            --wa: 70% 0.13 72;
+            --wac: 18% 0.035 60;
+            --er: 52% 0.16 30;
+            --erc: 97% 0.015 30;
+
+            --rounded-box: 0.75rem;
+            --rounded-btn: 0.45rem;
+            --border-btn: 1px;
+            --animation-btn: 0.12s;
+            --animation-input: 0.12s;
+            --btn-focus-scale: 0.99;
+        }
+
+        body {
+            background:
+                radial-gradient(circle at 20% 0%, rgba(180, 125, 46, 0.12), transparent 32rem),
+                linear-gradient(180deg, oklch(var(--b1)) 0%, oklch(94% 0.018 78) 42%, oklch(var(--b2)) 100%);
+            min-height: 100vh;
+        }
+
+        .navbar,
+        .btm-nav {
+            border-color: oklch(var(--b3));
+            box-shadow: 0 1px 0 rgba(66, 50, 33, 0.10);
+        }
+
+        .btn-primary {
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 1px 2px rgba(62, 45, 20, 0.16);
+        }
+
+        .stat-value {
+            letter-spacing: -0.04em;
+        }
+
+        .divider {
+            color: oklch(38% 0.03 75);
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .alert-info {
+            border-color: color-mix(in oklch, oklch(var(--in)) 35%, transparent);
+            background: color-mix(in oklch, oklch(var(--in)) 12%, oklch(var(--b1)));
+            color: oklch(30% 0.045 224);
+        }
+
+        /* Exclude the pixels taken by the bottom nav bar */
+        .exclude-bottom-nav {
+            padding-bottom: 64px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container mx-auto">
+    <!-- The Trickle Control Page -->
+    <section id="sectionTrickler">
+        <div class="grid grid-cols-1 exclude-bottom-nav">
+            <!-- Row 1 -->
+            <div class="grid grid-cols-2">
+
+                <!-- Stat 1: Current Weight  -->
+                <div class="stat">
+                    <div class="stat-title">Current Weight</div>
+                    <div id="currentWeightDecimal" class="stat-value">---</div>
+                    <button id="profileName" type="button" class="stat-desc text-primary link p-0 bg-transparent border-0" onclick="onProfileNameClicked()" aria-label="Change active profile">Unknown Profile</button>
+                    <div class="stat-desc">
+                        <progress id="currentWeightProgressPencentage" class="progress progress-primary" value="100" max="100"></progress>
+                    </div>
+                </div>
+
+                <!-- Stat 2: Charging Time -->
+                <div class="stat text-right">
+                    <div class="stat-title">Charging Time</div>
+                    <div id="chargeTimeValue" class="stat-value">-.-- s</div>
+                    <!-- These two lines are placeholders to ensure vertical alignment -->
+                    <div class="stat-desc">&nbsp;</div>
+                    <div class="stat-desc">&nbsp;</div>
+                </div>
+
+            </div>
+
+            <!-- Charge Mode Control -->
+            <section id="sectionTricklerChargeMode">
+                <div class="grid grid-cols-1 gap-2 px-4">
+                    <!-- Row 1 -->
+                    <div class="divider">Charge Control</div>
+
+                    <!-- Profile selector -->
+                    <div class="grid grid-cols-1 gap-1">
+                        <span class="label-text text-xs text-gray-500">Active Profile</span>
+                        <select id="tricklerProfileSelect" class="select select-bordered select-primary select-sm w-full" onchange="onTricklerProfileChanged(this)">
+                        </select>
+                    </div>
+
+                    <!-- Row 2 -->
+                    <ul class="steps">
+                        <li id="chargeModeStateWait" class="step step-primary">Wait</li>
+                        <li id="chargeModeStateCharging" class="step">Charging</li>
+                        <li id="chargeModeStateRemoveCup" class="step">Remove Cup</li>
+                        <li id="chargeModeStateReturnCup" class="step">Return Cup</li>
+                    </ul>
+
+                    <!-- Row 3 -->
+                    <input id="chargeWeightInput" type="number" step="0.001" placeholder="Charge Weight" class="input input-bordered input-primary" pattern="[0-9]+([\.,][0-9]+)?"/>
+
+                    <!-- Row 4 -->
+                    <div class="grid grid-cols-2 gap-2">
+                        <button id="confirmButton" class="btn btn-primary btn-lg" onclick="setChargeWeight()">Start</button>
+                        <button id="stopButton" class="btn btn-warning btn-lg" onclick="enterChargeMode(false)" disabled="disabled">Stop</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- AI Tuning Live Panel (shown during active tuning) -->
+            <div id="aiTuningMainPanel" class="bg-base-200 rounded-lg mx-4 mt-2 p-3 text-sm" style="display: none;">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-primary">AI Tuning Active</span>
+                    <span id="aiMainPhase" class="badge badge-primary">-</span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                    <div><span class="text-gray-500">Drop: </span><span id="aiMainDrop" class="font-mono">-</span></div>
+                    <div><span class="text-gray-500">Testing: </span><span id="aiMainTesting" class="font-mono">-</span></div>
+                    <div><span class="text-gray-500">Last: </span><span id="aiMainLast" class="font-mono">-</span></div>
+                    <div><button class="btn btn-warning btn-xs" onclick="aiTuningCancel()">Cancel</button></div>
+                </div>
+            </div>
+
+
+            <!-- Cleanup Mode Control -->
+            <section id="sectionTricklerCleanUpMode" style="display: none;">
+                <div class="grid grid-cols-1 gap-2 px-4">
+                    <div class="grid grid-cols-1 gap-2"> 
+                        <span class="label-text">Trickler Speed (rps)</span>
+                        <input id="tricklerSpeedSlider" type="range" min="-5" max="5" value="0" class="range range-lg" step="0.1" oninput="debouncedOnTricklerSpeedUpdate()"/>
+                        <button class="btn btn-primary w-full" onclick="onStopCleanupButtonClicked()">Stop</button>
+                    </div>
+                </div>
+            </section>
+
+            <div class="grid grid-cols-1 gap-2 px-4">
+                <div class="divider">Scale Control</div>
+                <div class="grid grid-cols-1 gap-2">
+                    <button class="btn btn-neutral" onclick="scaleForceZero()">Scale Zero</button>
+					<div class="h-8"></div>
+					<!-- Gate Ratio Control -->
+                    <div class="grid grid-cols-1 gap-2">
+                        <div class="divider">Gate Control</div>
+                    </div>
+                      
+				</div>				
+                    
+				<div class="grid grid-cols-3 gap-2"> 
+					<button class="btn btn-neutral" onclick="servoGateSetState(2)">Gate Open</button>
+					
+					
+					<input id="servoGateRatioNumber"
+						   type="number"
+						   min="0"
+						   max="1"
+						   step="0.001"
+						   value="0.500"
+						   class="input input-bordered input-primary"
+						   readonly />
+								
+					<button class="btn btn-neutral" onclick="servoGateSetState(1)">Gate Close</button>
+				</div>
+				<div></div>
+                <div class="grid grid-cols-1 gap-2">
+                        <input id="servoGateRatioSlider"
+                               type="range"
+                               min="0"
+                               max="1000"
+                               step="1"
+                               value="500"
+                               class="range range-lg"
+                               oninput="onServoGateRatioInput(); debouncedServoGateRatioSend();" />
+				</div>
+				<div class="grid grid-cols-1 gap-2">
+					<div></div>
+					<div class="flex justify-between w-full">
+						<span class="label-text">0.000 = Open</span>
+						<span class="label-text">1.000 = Close</span>
+					</div>
+				</div>
+			</div>
+		</div>
+
+        
+    </section>
+
+    <!-- The Settings Page -->
+    <section id="sectionSettings" style="display: none;">
+        <div class="drawer">
+            <input id="settingsDrawer" type="checkbox" class="drawer-toggle" /> 
+            <div class="drawer-content exclude-bottom-nav">
+                <!-- Navbar, fixed at the top-->
+                <div class="w-full navbar sticky top-0 bg-base-100">
+                    <div class="flex-none">
+                        <label for="settingsDrawer" aria-label="open sidebar" class="btn btn-square btn-ghost">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-6 h-6 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                        </label>
+                    </div> 
+                    <div id="settingsSectionTitle" class="w-full px-2 mx-2">---</div>
+                </div>
+
+                <div class="grid grid-cols-1 px-6 gap-2">
+                    <!-- Scale Settings -->
+                    <section class="settings-page" id="settings-scale" name="Scale">
+                        <form id="scaleConfigForm" action="/rest/scale_config" class="grid grid-cols-1 gap-3">
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Scale Driver</span>
+                                <select class="select select-bordered" name="s0">
+                                    <option value="0">AND FX-i Std</option>
+                                    <option value="1">Steinberg SBS</option>
+                                    <option value="2">GNG JJB</option>
+                                    <option value="3">US Solid JFDBS</option>
+                                    <option value="4">JM Science</option>
+                                    <option value="5">Creedmoore</option>
+                                    <option value="6">Radwag PS R2</option>
+				                    <option value="7">Sartorius</option>
+                                    <option value="8">Generic Scale Driver</option>
+                                    <option value="9">Ohaus PR Series</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Serial Baudrate</span>
+                                <select class="select select-bordered" name="s1">
+                                    <option value="0">4800</option>
+                                    <option value="1">9600</option>
+                                    <option value="2">19200</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Serial Format</span>
+                                <select class="select select-bordered" name="s2">
+                                    <option value="0">8 data bits, 1 stop bit, no parity bit</option>
+                                    <option value="1">7 data bits, 1 stop bit, no parity bit</option>
+                                </select>
+                            </div>
+
+                            <button class="btn btn-neutral settings-apply-btn">Apply</button>
+                        </form>
+                    </section>
+
+                    <!-- Profile Settings -->
+                    <section class="settings-page" id="settings-profile" name="Profiles" style="display: none;">
+                        <form id="profileConfigForm" action="/rest/profile_config" class="grid grid-cols-1 gap-3">
+                            <div class="grid grid-cols-1 gap-2">
+                                <div role="alert" class="alert">
+                                    <svg
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                        class="h-6 w-6 shrink-0 stroke-current">
+                                        <path
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            stroke-width="2"
+                                            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
+                                        </path>
+                                    </svg>
+                                    <a href="https://github.com/eamars/OpenTrickler/blob/main/Manual/tuning_guide.md" class="link">Powder Profile Tuning Guide</a>
+                                </div>
+
+                                <span class="label-text">Select Profile</span>
+                                <select class="select select-bordered select-primary" name="pf" onchange="populateProfileSelection(this)" id="select_profile_option">
+                                    <option value="0">#0</option>
+                                    <option value="1">#1</option>
+                                    <option value="2">#2</option>
+                                    <option value="3">#3</option>
+                                    <option value="4">#4</option>
+                                    <option value="5">#5</option>
+                                    <option value="6">#6</option>
+                                    <option value="7">#7</option>
+                                </select>
+
+                                <div class="grid grid-cols-2 gap-2">
+                                    <button type="button" class="btn btn-primary" onclick="onNewProfileClicked(event)">New Profile</button>
+                                    <button type="button" class="btn btn-neutral system-control-export-btn" onclick="onExportProfileBtnClicked(event)">Export Profile</button>
+                                </div>
+                                <div id="profileStatusMessage" class="alert alert-info py-2 text-sm">
+                                    <span>Changing the selected profile saves it as the reboot default.</span>
+                                </div>
+                            </div>
+
+                            <div class="divider"></div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Profile Name</span>
+                                <input type="text" class="input input-bordered" name="p2" maxlength="15">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Coarse Trickler Kp</span>
+                                <input type="number" class="input input-bordered" name="p3" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Coarse Trickler Ki</span>
+                                <input type="number" class="input input-bordered" name="p4" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Coarse Trickler Kd</span>
+                                <input type="number" class="input input-bordered" name="p5" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Coarse Trickler Min Flow Speed (rps)</span>
+                                <input type="number" class="input input-bordered" name="p6" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Coarse Trickler Max Flow Speed (rps)</span>
+                                <input type="number" class="input input-bordered" name="p7" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Fine Trickler Kp</span>
+                                <input type="number" class="input input-bordered" name="p8" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Fine Trickler Ki</span>
+                                <input type="number" class="input input-bordered" name="p9" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Fine Trickler Kd</span>
+                                <input type="number" class="input input-bordered" name="p10" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Fine Trickler Min Flow Speed (rps)</span>
+                                <input type="number" class="input input-bordered" name="p11" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Fine Trickler Max Flow Speed (rps)</span>
+                                <input type="number" class="input input-bordered" name="p12" step="0.001">
+                            </div>
+
+                            <button class="btn btn-neutral settings-apply-btn">Apply</button>
+                        </form>
+                    </section>
+
+                    <!-- Charge Mode Settings -->
+                    <section class="settings-page" id="settings-charge-mode" name="Charge Mode" style="display: none;">
+                        <form id="chargeModeConfigForm" action="/rest/charge_mode_config" class="grid grid-cols-1 gap-3">
+                            <div class="grid grid-cols-2 gap-1">
+                                <span class="label-text">Neopixel LED Normal Charge Colour</span>
+                                <input type="color" class="input w-full" name="c1">
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-1">
+                                <span class="label-text">Neopixel LED Under Charge Colour</span>
+                                <input type="color" class="input w-full" name="c2">
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-1">
+                                <span class="label-text">Neopixel LED Over Charge Colour</span>
+                                <input type="color" class="input w-full" name="c3">
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-1">
+                                <span class="label-text">Neopixel LED Not Ready Colour</span>
+                                <input type="color" class="input w-full" name="c4">
+                            </div>
+
+                            <div class="divider"></div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Coarse Trickler Stop Threshold</span>
+                                <input type="number" class="input input-bordered" name="c5" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Fine Trickler Stop Threshold</span>
+                                <input type="number" class="input input-bordered" name="c6" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Set Point Accuracy (Standard Deviation)</span>
+                                <input type="number" class="input input-bordered" name="c7" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Set Point Accuracy (Mean)</span>
+                                <input type="number" class="input input-bordered" name="c8" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Decimal Places</span>
+                                <select class="select select-bordered" name="c9">
+                                    <option value="0">2</option>
+                                    <option value="1">3</option>
+                                </select>
+                            </div>
+
+                            <div class="divider"></div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Enable Pre-Charge (requires servo gate)</span>
+                                <select class="select select-bordered" name="c10">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Pre-Charge Duration (ms)</span>
+                                <input type="number" class="input input-bordered" name="c11" step="1">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Pre-Charge Speed (rps)</span>
+                                <input type="number" class="input input-bordered" name="c12" step="0.001">
+                            </div>
+							<div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Mid-stage Servo Gate Position (0=open, 1=close)</span>
+                                <input type="number" class="input input-bordered" name="c13" step="0.001" min="0" max="1">
+                            </div>
+
+                            <div class="divider"></div>
+
+                            <div class="grid grid-cols-2 gap-1">
+                                <span class="label-text">Auto-Zero Scale on Cup Return</span>
+                                <select class="select select-bordered" name="c17">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
+
+                            <div class="divider">Pulse Mode</div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Enable Pulse Mode</span>
+                                <select class="select select-bordered" name="c18">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                                <span class="text-xs text-gray-500">Pulses motor near target instead of continuous run - helps slow scales</span>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Pulse Threshold (grains)</span>
+                                <input type="number" class="input input-bordered" name="c19" step="0.01" min="0.3" max="1.0">
+                                <span class="text-xs text-gray-500">Start pulsing when within this weight of target (0.3-1.0 gr)</span>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Pulse Duration (ms)</span>
+                                <input type="number" class="input input-bordered" name="c20" step="5" min="10" max="200">
+                                <span class="text-xs text-gray-500">Motor on time per pulse</span>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Pulse Wait (ms)</span>
+                                <input type="number" class="input input-bordered" name="c21" step="10" min="50" max="500">
+                                <span class="text-xs text-gray-500">Wait time for scale to update between pulses</span>
+                            </div>
+
+                            <div class="divider text-sm">Scale Stabilization</div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Fixed Stabilization Wait</span>
+                                <select class="select select-bordered" name="c22">
+                                    <option value="true">Yes (fixed time)</option>
+                                    <option value="false">No (adaptive SD-based)</option>
+                                </select>
+                                <span class="text-xs text-gray-500">ON = fixed wait time; OFF = adaptive SD-based (up to 3s)</span>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Stabilization Time (ms)</span>
+                                <input type="number" class="input input-bordered" name="c23" step="100" min="200" max="5000">
+                                <span class="text-xs text-gray-500">Fixed wait after motors stop (used when fixed stabilization is ON)</span>
+                            </div>
+
+                            <button class="btn btn-neutral settings-apply-btn">Apply</button>
+                        </form>
+                    </section>
+
+                    <!-- Wireless Settings -->
+                    <section class="settings-page" id="settings-wireless" name="Wireless" style="display: none;">
+                        <form id="wirelessConfigForm" action="/rest/wireless_config" class="grid grid-cols-1 gap-3">
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">WiFi SSID</span>
+                                <input type="text" class="input input-bordered" name="w0" maxlength="32">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <div>
+                                    <div class="badge badge-neutral">Write Only</div>
+                                    <span class="label-text">WiFi Password</span> 
+                                </div>
+                                <input type="password" class="input input-bordered" name="w1" maxlength="63" placeholder="********">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">WiFi Authentication Method</span>
+                                <select class="select select-bordered" name="w2">
+                                    <option value="0">None</option>
+                                    <option value="1">WPA-TKIP</option>
+                                    <option value="2">WPA2-AES</option>
+                                    <option value="3">WPA2-MIXED</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">WiFi Attempt to Connect Timeout (ms)</span>
+                                <input type="number" class="input input-bordered" name="w3" step="1000">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Enable WiFi</span>
+                                <select class="select select-bordered" name="w4">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
+
+                            <button class="btn btn-neutral settings-apply-btn">Apply</button>
+                        </form>
+                    </section>
+
+                    <!-- Coarse Trickler Motor Settings -->
+                    <section class="settings-page" id="settings-coarse-motor" name="Coarse Trickler Motor" style="display: none;">
+                        <form id="coarseMotorConfigForm" action="/rest/coarse_motor_config" class="grid grid-cols-1 gap-3">
+                            <div role="alert" class="alert alert-info text-sm">
+                                <span>Physical target: coarse tube should rotate counter-clockwise. Change "Inverted Step Direction Pin" if the test run moves the wrong way.</span>
+                            </div>
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Angular Acceleration (rps/s)</span>
+                                <input type="number" class="input input-bordered" name="m0" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Full Steps per Rotation</span>
+                                <select class="select select-bordered" name="m1">
+                                    <option value="200">200</option>
+                                    <option value="400">400</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Current (mA)</span>
+                                <input type="number" class="input input-bordered" name="m2" step="1">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Microsteps</span>
+                                <select class="select select-bordered" name="m3">
+                                    <option value="16">16</option>
+                                    <option value="32">32</option>
+                                    <option value="64">64</option>
+                                    <option value="128">128</option>
+                                    <option value="256">256</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Max Speed (rps)</span>
+                                <input type="number" class="input input-bordered" name="m4" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Min Speed (rps)</span>
+                                <input type="number" class="input input-bordered" name="m6" step="0.001"> 
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Current Sensing Resistor (mOhm)</span>
+                                <input type="number" class="input input-bordered" name="m5" step="1"> 
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Gear Ratio</span>
+                                <input type="number" class="input input-bordered" name="m7" step="0.0000001"> 
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Inverted Enable Pin</span>
+                                <select class="select select-bordered" name="m8">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Inverted Step Direction Pin</span>
+                                <select class="select select-bordered" name="m9">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                                <span class="text-xs text-base-content/70">Changes motor rotation direction. Apply while stopped; Save to EEPROM keeps it after reboot.</span>
+                            </div>
+
+                            <button class="btn btn-neutral settings-apply-btn">Apply</button>
+                        </form> 
+                    </section>
+
+                    <!-- Fine Trickler motor Settings -->
+                    <section class="settings-page" id="settings-fine-motor" name="Fine Trickler Motor" style="display: none;">
+                        <form id="fineMotorConfigForm" action="/rest/fine_motor_config" class="grid grid-cols-1 gap-3">
+                            <div role="alert" class="alert alert-info text-sm">
+                                <span>Physical target: fine tube should rotate clockwise. Change "Inverted Step Direction Pin" if the test run moves the wrong way.</span>
+                            </div>
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Angular Acceleration (rps/s)</span>
+                                <input type="number" class="input input-bordered" name="m0" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Full Steps per Rotation</span>
+                                <select class="select select-bordered" name="m1">
+                                    <option value="200">200</option>
+                                    <option value="400">400</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Current (mA)</span>
+                                <input type="number" class="input input-bordered" name="m2" step="1">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Microsteps</span>
+                                <select class="select select-bordered" name="m3">
+                                    <option value="16">16</option>
+                                    <option value="32">32</option>
+                                    <option value="64">64</option>
+                                    <option value="128">128</option>
+                                    <option value="256">256</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Max Speed (rps)</span>
+                                <input type="number" class="input input-bordered" name="m4" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Min Speed (rps)</span>
+                                <input type="number" class="input input-bordered" name="m6" step="0.001"> 
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Current Sensing Resistor (mOhm)</span>
+                                <input type="number" class="input input-bordered" name="m5" step="1"> 
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Gear Ratio</span>
+                                <input type="number" class="input input-bordered" name="m7" step="0.0000001"> 
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Inverted Enable Pin</span>
+                                <select class="select select-bordered" name="m8">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Inverted Step Direction Pin</span>
+                                <select class="select select-bordered" name="m9">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                                <span class="text-xs text-base-content/70">Changes motor rotation direction. Apply while stopped; Save to EEPROM keeps it after reboot.</span>
+                            </div>
+
+                            <button class="btn btn-neutral settings-apply-btn">Apply</button>
+                        </form> 
+                    </section>
+
+                    <!-- Neopxiel LED Settings -->
+                    <section class="settings-page" id="settings-neopixel-led" name="Neopixel LED" style="display: none;">
+                        <form id="neopixelLedConfigForm" action="/rest/neopixel_led_config" class="grid grid-cols-1 gap-3">
+                            <div role="alert" class="alert">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                <span>The default Neopxiel LED colour can be overridden by Charge Mode Functions.</span>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-1">
+                                <span class="label-text">Mini 12864 Display Background Colour</span>
+                                <input type="color" class="input w-full" name="bl">
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-1">
+                                <span class="label-text">LED1 Default Colour</span>
+                                <input type="color" class="input w-full" name="l1">
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-1">
+                                <span class="label-text">LED2 Default Colour</span>
+                                <input type="color" class="input w-full" name="l2">
+                            </div>
+
+                            <div class="divider"></div>
+
+                            <div class="grid grid-cols-2 gap-1">
+                                <span class="label-text">PWM OUT Chain Count</span>
+                                <select class="select select-bordered" name="l3">
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                    <option value="3">3</option>
+                                    <option value="4">4</option>
+                                    <option value="5">5</option>
+                                    <option value="6">6</option>
+                                    <option value="7">7</option>
+                                    <option value="8">8</option>
+                                    <option value="9">9</option>
+                                    <option value="10">10</option>
+                                    <option value="11">11</option>
+                                    <option value="12">12</option>
+                                    <option value="13">13</option>
+                                    <option value="14">14</option>
+                                    <option value="15">15</option>
+                                    <option value="16">16</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">PWM OUT Is RGBW LED? (WS2812B or SK6812)</span>
+                                <select class="select select-bordered" name="l4">
+                                    <option value=true>Yes</option>
+                                    <option value=false>No</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">PWM OUT Neopixel LED Colour Order</span>
+                                <select class="select select-bordered" name="l5">
+                                    <option value="0">RGB</option>
+                                    <option value="1">GRB</option>
+                                </select>
+                            </div>
+
+                            <button class="btn btn-neutral settings-apply-btn">Apply</button>
+                        </form>
+                    </section>
+
+                    <!-- Mini 12864 Module Settings -->
+                    <section class="settings-page" id="settings-mini-12864-module" name="Mini 12864 Module" style="display: none;">
+                        <form id="mini12864ModuleConfigForm" action="/rest/mini_12864_config" class="grid grid-cols-1 gap-3">
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Inverted Rotary Button Direction</span>
+                                <select class="select select-bordered" name="b0">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Display Rotation (deg)</span>
+                                <select class="select select-bordered" name="b1">
+                                    <option value="0">0</option>
+                                    <option value="2">180</option>
+                                </select>
+                            </div>
+
+                            <button class="btn btn-neutral settings-apply-btn">Apply</button>
+                        </form>
+                    </section>
+
+                    <section class="settings-page" id="settings-servo-gate" name="Servo Gate" style="display: none;">
+                        <form id="servoGateConfigForm" action="/rest/servo_gate_config" class="grid grid-cols-1 gap-3">
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Servo Gate Enable</span>
+                                <select class="select select-bordered" name="c0">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Shutter 0 Close Duty Cycle</span>
+                                <input type="number" class="input input-bordered" name="c1" step="0.001">
+                            </div>
+                            
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Shutter 0 Open Duty Cycle</span>
+                                <input type="number" class="input input-bordered" name="c2" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Shutter 1 Close Duty Cycle</span>
+                                <input type="number" class="input input-bordered" name="c3" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Shutter 1 Open Duty Cycle</span>
+                                <input type="number" class="input input-bordered" name="c4" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Shutter Close Speed (%/s)</span>
+                                <input type="number" class="input input-bordered" name="c5" step="0.001">
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Shutter Open Speed (%/s)</span>
+                                <input type="number" class="input input-bordered" name="c6" step="0.001">
+                            </div>
+
+                            <button class="btn btn-neutral settings-apply-btn">Apply</button>
+                        </form>
+                    </section>
+
+                                        <!-- AI Tuning Settings -->
+                    <section class="settings-page" id="settings-ai-tuning" name="AI Tuning" style="display: none;">
+                        <div class="grid grid-cols-1 gap-3">
+
+                            <div role="alert" class="alert">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="h-6 w-6 shrink-0 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                <span>First characterize powder flow, then run OpenTrickler calibration to measure scale lag, powder flight, stop-tail uncertainty, and safe handoff timing.</span>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Profile to Learn</span>
+                                <select id="aiTuningProfileSelect" class="select select-bordered select-primary" onchange="onAiTuningProfileChanged(this)"></select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Target Weight (grains)</span>
+                                <input id="aiTuningTargetWeight" type="number" step="0.01" min="1" max="200" class="input input-bordered" placeholder="e.g. 38.70">
+                            </div>
+
+                            <div class="flex justify-between items-center">
+                                <span class="label-text">Status:</span>
+                                <span id="aiTuningState" class="badge badge-neutral">Idle</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="label-text">Samples completed:</span>
+                                <span id="aiTuningDrops" class="font-mono">0</span>
+                            </div>
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text text-xs text-gray-500">What the learner is doing</span>
+                                <div id="aiTuningStatusMessage" class="bg-base-200 rounded-box p-3 text-sm">Idle</div>
+                            </div>
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text text-xs text-gray-500">Progress</span>
+                                <progress id="aiTuningProgress" class="progress progress-primary" value="0" max="100"></progress>
+                            </div>
+
+                            <div id="aiTuningChargeStateDiv" style="display: none;">
+                                <div class="divider">Current Action</div>
+                                <ul class="steps steps-horizontal w-full text-xs">
+                                    <li id="aiChargeModeStateWait" class="step step-primary">Wait</li>
+                                    <li id="aiChargeModeStateCharging" class="step">Charging</li>
+                                    <li id="aiChargeModeStateRemoveCup" class="step">Remove Cup</li>
+                                    <li id="aiChargeModeStateReturnCup" class="step">Return Cup</li>
+                                </ul>
+                            </div>
+
+                            <div class="divider">OpenTrickler Calibration</div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="stat bg-base-200 rounded-box p-2">
+                                    <div class="stat-title text-xs">Calibration</div>
+                                    <div id="aiMachineCalStatus" class="stat-value text-lg">-</div>
+                                </div>
+                                <div class="stat bg-base-200 rounded-box p-2">
+                                    <div class="stat-title text-xs">Scale Period</div>
+                                    <div id="aiMachineScalePeriod" class="stat-value text-lg">-</div>
+                                </div>
+                                <div class="stat bg-base-200 rounded-box p-2">
+                                    <div class="stat-title text-xs">Bulk Handoff</div>
+                                    <div id="aiMachineBulkHandoff" class="stat-value text-lg">-</div>
+                                </div>
+                                <div class="stat bg-base-200 rounded-box p-2">
+                                    <div class="stat-title text-xs">Trim Stop</div>
+                                    <div id="aiMachineTrimStop" class="stat-value text-lg">-</div>
+                                </div>
+                                <div class="stat bg-base-200 rounded-box p-2">
+                                    <div class="stat-title text-xs">Coarse Tail p95</div>
+                                    <div id="aiMachineCoarseTail" class="stat-value text-lg">-</div>
+                                </div>
+                                <div class="stat bg-base-200 rounded-box p-2">
+                                    <div class="stat-title text-xs">Fine Tail p95</div>
+                                    <div id="aiMachineFineTail" class="stat-value text-lg">-</div>
+                                </div>
+                            </div>
+                            <div class="text-xs text-base-content/70">These are the machine-level facts the controller uses to avoid guessing: safe bulk reserve, trim reserve, scale timing, and measured post-stop tail.</div>
+                            <div class="text-sm text-base-content/70">Saved model: <span id="aiSavedModelStatus" class="font-semibold">No saved model</span></div>
+
+                            <div class="divider">Steering <span class="badge badge-warning badge-sm">Beta</span></div>
+                            <div class="alert alert-warning text-xs">
+                                <span>Small manual nudges layered on top of the learned model. Use after a few throws when the behavior is obvious, then Undo Last Steer if it moves the wrong way.</span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <button class="btn btn-sm btn-primary" onclick="aiSteering('faster')">Faster</button>
+                                <button class="btn btn-sm btn-warning" onclick="aiSteering('safer')">Safer</button>
+                                <button class="btn btn-sm btn-info" onclick="aiSteering('fine_finish_faster')">Fine Finish Faster</button>
+                                <button class="btn btn-sm btn-accent" onclick="aiSteering('bulk_closer')">Bulk Closer</button>
+                            </div>
+                            <button id="aiSteeringUndoBtn" class="btn btn-sm btn-outline w-full" onclick="aiSteering('undo_last')">Undo Last Steer</button>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="stat bg-base-200 rounded-box p-2">
+                                    <div class="stat-title text-xs">Fine Tube Profile</div>
+                                    <div id="aiSteeringTubeProfile" class="stat-value text-lg">-</div>
+                                </div>
+                                <div class="stat bg-base-200 rounded-box p-2">
+                                    <div class="stat-title text-xs">Tail Confidence</div>
+                                    <div id="aiSteeringTailConfidence" class="stat-value text-lg">-</div>
+                                </div>
+                                <div class="stat bg-base-200 rounded-box p-2">
+                                    <div class="stat-title text-xs">Bulk Bias</div>
+                                    <div id="aiSteeringBulkBias" class="stat-value text-lg">-</div>
+                                </div>
+                                <div class="stat bg-base-200 rounded-box p-2">
+                                    <div class="stat-title text-xs">Fine Bias</div>
+                                    <div id="aiSteeringFineBias" class="stat-value text-lg">-</div>
+                                </div>
+                                <div class="stat bg-base-200 rounded-box p-2">
+                                    <div class="stat-title text-xs">Micro Tail</div>
+                                    <div id="aiSteeringMicroTail" class="stat-value text-lg">-</div>
+                                </div>
+                                <div class="stat bg-base-200 rounded-box p-2">
+                                    <div class="stat-title text-xs">Recovery Scale</div>
+                                    <div id="aiSteeringRecoveryScale" class="stat-value text-lg">-</div>
+                                </div>
+                            </div>
+
+                            <button class="btn btn-accent w-full" onclick="scaleForceZero()">Scale Zero / Tare</button>
+
+                            <div class="divider"></div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <button id="aiTuningStartBtn" class="btn btn-primary" onclick="aiTuningStart()">Start Characterization</button>
+                                <button id="aiTuningCancelBtn" class="btn btn-warning" onclick="aiTuningCancel()" disabled>Cancel</button>
+                            </div>
+                            <button id="aiMachineCalStartBtn" class="btn btn-info w-full" onclick="aiMachineCalibrationStart()">Start OpenTrickler Calibration</button>
+                            <button id="aiTuningApplyBtn" class="btn btn-success w-full" onclick="aiTuningApply()" disabled>Save Learned Model</button>
+
+                            <details class="collapse collapse-arrow bg-base-200 rounded-box">
+                                <summary class="collapse-title font-medium">Advanced Live Details</summary>
+                                <div class="collapse-content grid grid-cols-1 gap-3 pt-2">
+                                    <div class="divider">Current Plan</div>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Motor</div>
+                                            <div id="aiPlanMotor" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Speed</div>
+                                            <div id="aiPlanSpeed" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Motor On</div>
+                                            <div id="aiPlanTime" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Sample Target</div>
+                                            <div id="aiPlanTarget" class="stat-value text-lg">-</div>
+                                        </div>
+                                    </div>
+                                    <div class="bg-base-100 rounded-box p-3 text-sm">
+                                        <div class="flex justify-between"><span>Budget</span><span id="aiPlanBudget" class="font-mono">-</span></div>
+                                        <div class="mt-2 text-xs text-base-content/70" id="aiPlanDesc">Waiting for a run.</div>
+                                    </div>
+
+                                    <div id="aiCycleReport" style="display: none;">
+                                        <div class="divider">Cycle Log</div>
+                                        <div id="aiCycleLog" class="font-mono text-xs bg-base-100 rounded-box p-2 max-h-40 overflow-y-auto whitespace-pre-wrap"></div>
+                                    </div>
+
+                                    <div class="divider">Last Sample</div>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Motor</div>
+                                            <div id="aiLastMode" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Delivered</div>
+                                            <div id="aiLastDelivered" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Tail</div>
+                                            <div id="aiLastTail" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Error</div>
+                                            <div id="aiLastError" class="stat-value text-lg">-</div>
+                                        </div>
+                                    </div>
+                                    <div class="text-sm text-base-content/70" id="aiLastTime">No samples yet.</div>
+
+                                    <div class="divider">Working Model</div>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Coarse Best Speed</div>
+                                            <div id="aiModelCoarseSpeed" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Coarse Flow</div>
+                                            <div id="aiModelCoarseFlow" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Coarse Tail</div>
+                                            <div id="aiModelCoarseTail" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Coarse Trim Speed</div>
+                                            <div id="aiModelCoarseTrimSpeed" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Coarse Trim Tail</div>
+                                            <div id="aiModelCoarseTrimTail" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Fine Best Speed</div>
+                                            <div id="aiModelFineSpeed" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Fine Flow</div>
+                                            <div id="aiModelFineFlow" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Fine Tail</div>
+                                            <div id="aiModelFineTail" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Fine Window</div>
+                                            <div id="aiModelFineWindow" class="stat-value text-lg">-</div>
+                                        </div>
+                                        <div class="stat bg-base-100 rounded-box p-2">
+                                            <div class="stat-title text-xs">Runtime Bias</div>
+                                            <div id="aiModelBias" class="stat-value text-lg">-</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <details class="collapse collapse-arrow bg-base-200 rounded-box">
+                                <summary class="collapse-title font-medium">Characterization Settings</summary>
+                                <div class="collapse-content grid grid-cols-1 gap-3 pt-2">
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <div class="grid grid-cols-1 gap-1">
+                                            <span class="label-text text-xs">Coarse Budget (gn)</span>
+                                            <input type="number" id="aiCfgCoarseBudget" class="input input-bordered input-sm" step="1" min="10">
+                                        </div>
+                                        <div class="grid grid-cols-1 gap-1">
+                                            <span class="label-text text-xs">Fine Budget (gn)</span>
+                                            <input type="number" id="aiCfgFineBudget" class="input input-bordered input-sm" step="1" min="5">
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <div class="grid grid-cols-1 gap-1">
+                                            <span class="label-text text-xs">Coarse Samples</span>
+                                            <input type="number" id="aiCfgCoarseSamples" class="input input-bordered input-sm" step="1" min="2" max="6">
+                                        </div>
+                                        <div class="grid grid-cols-1 gap-1">
+                                            <span class="label-text text-xs">Fine Samples</span>
+                                            <input type="number" id="aiCfgFineSamples" class="input input-bordered input-sm" step="1" min="2" max="6">
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <div class="grid grid-cols-1 gap-1">
+                                            <span class="label-text text-xs">Coarse Sample Target (gn)</span>
+                                            <input type="number" id="aiCfgCoarseTarget" class="input input-bordered input-sm" step="0.1" min="1">
+                                        </div>
+                                        <div class="grid grid-cols-1 gap-1">
+                                            <span class="label-text text-xs">Fine Sample Target (gn)</span>
+                                            <input type="number" id="aiCfgFineTarget" class="input input-bordered input-sm" step="0.1" min="0.2">
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-1 gap-1">
+                                        <span class="label-text text-xs">Noise Margin (gn)</span>
+                                        <input type="number" id="aiCfgNoiseMargin" class="input input-bordered input-sm" step="0.001" min="0.001">
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <div class="grid grid-cols-1 gap-1">
+                                            <span class="label-text text-xs">Time Cost Weight</span>
+                                            <input type="number" id="aiCfgTimeWeight" class="input input-bordered input-sm" step="0.1" min="0.1">
+                                        </div>
+                                        <div class="grid grid-cols-1 gap-1">
+                                            <span class="label-text text-xs">Error Cost Weight</span>
+                                            <input type="number" id="aiCfgErrorWeight" class="input input-bordered input-sm" step="0.1" min="0.1">
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <button class="btn btn-sm btn-primary" onclick="aiTuningSaveAdvancedConfig()">Save</button>
+                                        <button class="btn btn-sm btn-ghost" onclick="aiLoadAdvancedConfig()">Reload</button>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <div id="aiRuntimeHistorySection">
+                                <div class="divider">Runtime History</div>
+                                <div class="flex justify-between items-center">
+                                    <span class="text-sm text-gray-500">Saved runtime observations</span>
+                                    <div class="flex items-center gap-2">
+                                        <span id="aiHistoryCount" class="badge badge-info">0 obs</span>
+                                        <button class="btn btn-xs btn-ghost" onclick="aiLoadHistory()">Refresh</button>
+                                        <button class="btn btn-xs btn-ghost" onclick="aiClearHistory()">Clear</button>
+                                    </div>
+                                </div>
+                                <div class="overflow-x-auto bg-base-200 rounded-box p-2">
+                                    <table class="table table-xs">
+                                        <thead>
+                                            <tr><th>#</th><th>Target</th><th>Error</th><th>Time</th></tr>
+                                        </thead>
+                                        <tbody id="aiHistoryTableBody"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                        </div>
+                    </section>
+
+                    <!-- Firmware Update Page -->
+                    <section class="settings-page" id="settings-firmware-update" name="Firmware Update" style="display: none;">
+                        <div class="grid grid-cols-1 gap-4">
+                            <div class="alert alert-info">
+                                <span>OTA currently stages and verifies firmware over WiFi. Applying the staged image requires one future OTA bootloader transition build.</span>
+                            </div>
+
+                            <div class="stats stats-vertical shadow">
+                                <div class="stat">
+                                    <div class="stat-title">OTA Support</div>
+                                    <div id="otaSupportStat" class="stat-value text-lg">Unknown</div>
+                                    <div id="otaSupportDesc" class="stat-desc">Refresh status to inspect flash layout.</div>
+                                </div>
+                                <div class="stat">
+                                    <div class="stat-title">Staged Firmware</div>
+                                    <div id="otaStagedStat" class="stat-value text-lg">Unknown</div>
+                                    <div id="otaStagedDesc" class="stat-desc">No data loaded yet.</div>
+                                </div>
+                            </div>
+
+                            <div class="card bg-base-200">
+                                <div class="card-body">
+                                    <h3 class="card-title">Upload From This PC</h3>
+                                    <p class="text-sm">After building, upload the binary from PowerShell:</p>
+                                    <pre class="text-xs whitespace-pre-wrap bg-base-300 rounded-box p-3">python C:\OT\AI\tools\ota_upload.py --host 192.168.40.88 --bin C:\OT\AI\build-pico2w-release\app.bin</pre>
+                                    <p class="text-sm">Use the UF2 only for USB flashing. OTA staging uses the companion app.bin because it is the raw flash image.</p>
+                                </div>
+                            </div>
+
+                            <div class="flex gap-2">
+                                <button class="btn btn-neutral" onclick="otaRefreshStatus()">Refresh OTA Status</button>
+                                <button class="btn btn-warning" onclick="otaApplyStaged()">Apply Staged Firmware</button>
+                            </div>
+
+                            <pre id="otaStatusText" class="text-xs whitespace-pre-wrap bg-base-200 rounded-box p-3">OTA status not loaded.</pre>
+                        </div>
+                    </section>
+
+                    <!-- System Control Page -->
+                    <section class="settings-page" id="settings-system-control" name="System Control" style="display: none;">
+                        <form id="systemControlForm" action="/rest/system_control" class="grid grid-cols-1 gap-3">
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Unique ID</span>
+                                <input type="text" class="input input-bordered" name="s0" disabled="disabled" readonly>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Firmware Version</span>
+                                <input type="text" class="input input-bordered" name="s1" disabled="disabled" readonly>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">VCS Hash</span>
+                                <input type="text" class="input input-bordered" name="s2" disabled="disabled" readonly>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Build Type</span>
+                                <input type="text" class="input input-bordered" name="s3" disabled="disabled" readonly>
+                            </div>
+
+                            <div class="divider"></div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Save All Changes to EEPROM</span>
+                                <select class="select select-bordered" name="s4">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
+
+                            
+                            <div class="grid grid-cols-1 gap-1">
+                                <span class="label-text">Reboot</span>
+                                <select class="select select-bordered" name="s5">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-1">
+                                <div>
+                                    <div class="badge badge-warning">Warning</div>
+                                    <span class="label-text">Erase EEPROM</span> 
+                                </div>
+                                <select class="select select-bordered" name="s6">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
+
+                            <button class="btn btn-neutral system-control-apply-btn" id="system_control_apply_btn">Apply</button>
+                        </form>
+
+                        <div class="divider"></div>
+
+                        <!-- Export and Import config -->
+                        <div class="grid grid-cols-2 gap-1">
+                            <button class="btn btn-neutral system-control-export-btn" onclick="onExportConfigClicked()">Export Config</button>
+                            <button class="btn btn-neutral system-control-import-btn" onclick="onImportConfigClicked()">Import Config</button>
+                        </div>
+
+                    </section>
+
+                </div>
+            </div> 
+            <div class="drawer-side exclude-bottom-nav">
+                <label id="closeDrawerSide" for="settingsDrawer" aria-label="close sidebar" class="drawer-overlay"></label> 
+                <ul id=drawerSlide" class="menu p-2 w-60 min-h-full bg-base-200">
+                    <!-- Sidebar content here -->
+                    <li><a class="text-lg" onclick="onSettingsLinkClicked('settings-scale')">Scale</a></li>
+                    <li><a class="text-lg" onclick="onSettingsLinkClicked('settings-profile')">Profiles</a></li>
+                    <li><a class="text-lg" onclick="onSettingsLinkClicked('settings-charge-mode')">Charge Mode</a></li>
+                    <li><a class="text-lg" onclick="onSettingsLinkClicked('settings-wireless')">Wireless</a></li>
+                    <li><a class="text-lg" onclick="onSettingsLinkClicked('settings-coarse-motor')">Coarse Motor</a></li>
+                    <li><a class="text-lg" onclick="onSettingsLinkClicked('settings-fine-motor')">Fine Motor</a></li>
+                    <li><a class="text-lg" onclick="onSettingsLinkClicked('settings-neopixel-led')">Neopixel LED</a></li>
+                    <li><a class="text-lg" onclick="onSettingsLinkClicked('settings-mini-12864-module')">Mini 12864 Module</a></li>
+                    <li><a class="text-lg" onclick="onSettingsLinkClicked('settings-servo-gate')">Servo Gate</a></li>
+                    <li><a class="text-lg" onclick="onSettingsLinkClicked('settings-firmware-update')">Firmware Update</a></li>
+                    <li><a class="text-lg" onclick="onSettingsLinkClicked('settings-system-control')">System Control</a></li>
+                    <li><a class="text-lg" onclick="onSettingsLinkClicked('settings-ai-tuning')">AI Tuning</a></li>
+                </ul>
+            </div>
+        </div>
+
+    </section>
+</div>
+
+
+<!-- Bottom navigation bar -->
+<div class="btm-nav">
+    <button id="tricklerNavButton" class="active" onclick="onNavButtonClicked('trickler')">
+        <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+            <path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="M18.796 4H5.204a1 1 0 0 0-.753 1.659l5.302 6.058a1 1 0 0 1 .247.659v4.874a.5.5 0 0 0 .2.4l3 2.25a.5.5 0 0 0 .8-.4v-7.124a1 1 0 0 1 .247-.659l5.302-6.059c.566-.646.106-1.658-.753-1.658Z"/>
+          </svg>          
+        <span class="text-sm text-gray-500 dark:text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-500">Trickler</span>
+    </button>
+    <button id="settingsNavButton" onclick="onNavButtonClicked('settings')">
+        <svg class="w-5 h-5 mb-2 text-gray-500 dark:text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-500" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20">
+            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 12.25V1m0 11.25a2.25 2.25 0 0 0 0 4.5m0-4.5a2.25 2.25 0 0 1 0 4.5M4 19v-2.25m6-13.5V1m0 2.25a2.25 2.25 0 0 0 0 4.5m0-4.5a2.25 2.25 0 0 1 0 4.5M10 19V7.75m6 4.5V1m0 11.25a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5ZM16 19v-2"/>
+        </svg>
+        <span class="text-sm text-gray-500 dark:text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-500">Settings</span>
+    </button>
+    <button id="aiTuningNavButton" onclick="onNavButtonClicked('aiTuning')">
+        <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.5 11.5 11 13l4-3.5M12 20a16.405 16.405 0 0 1-5.092-3.583A14.557 14.557 0 0 1 5 13.643V6.221a1 1 0 0 1 .7-.95l6-1.803a1 1 0 0 1 .594 0l6 1.803a1 1 0 0 1 .7.95v7.421a14.557 14.557 0 0 1-1.908 3.774A16.405 16.405 0 0 1 12 20Z"/>
+        </svg>
+        <span class="text-sm text-gray-500 dark:text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-500">AI Tuning</span>
+    </button>
+    <button id="purgeNavButton" onclick="onNavButtonClicked('purge')">
+        <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 12H4m12 0-4 4m4-4-4-4m3-4h2a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3h-2"/>
+          </svg>
+        <span class="text-sm text-gray-500 dark:text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-500">Purge</span>
+    </button>
+</div>
+
+
+<!-- Other resources -->
+<dialog id="applySystemControlDialog" class="modal modal-bottom sm:modal-middle">
+    <div class="modal-box">
+        <div class="grid grid-cols-1 gap-2">
+            <h3 class="font-bold text-lg">Pending Actions</h3>
+            <div id="systemControlDialogWarningText"></div>
+        </div>
+        <div class="modal-action">
+            <form method="dialog">
+                <!-- if there is a button in form, it will close the modal -->
+                <div class="grid grid-cols-2 gap-2">
+                    <button id="dialogSystemControlApplySettingsButton" class="btn btn-error">Apply</button>
+                    <button class="btn">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</dialog>
+
+
+<dialog id="applySettingsDialog" class="modal modal-bottom sm:modal-middle">
+    <div class="modal-box">
+        <div class="grid grid-cols-1 gap-2">
+            <h3 class="font-bold text-lg">
+                Save <span id="applySettingsDialogTitle"></span> Settings
+            </h3>
+            <p class="py-4">Do you also want to save settings to EEPROM?</p>
+        </div>
+        <div class="modal-action">
+            <form method="dialog">
+                <!-- if there is a button in form, it will close the modal -->
+                <div class="grid grid-cols-3 gap-2">
+                    <button id="dialogSaveToEepromButton" class="btn btn-primary">Save to EEPROM</button>
+                    <button id="dialogApplySettingsButton" class="btn btn-neutral">Apply</button>
+                    <button class="btn">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</dialog>
+
+<dialog id="quickChangeProfileDialog" class="modal modal-bottom sm:modal-middle">
+    <div class="modal-box">
+        <div class="grid grid-cols-1 gap-2">
+            <h3 class="font-bold text-lg">Change Profile</h3>
+            <select id="quickChangeProfileSelect" class="select select-bordered w-full max-w-xs">
+            </select>
+        </div>
+        <div class="modal-action">
+            <form method="dialog">
+                <!-- if there is a button in form, it will close the modal -->
+                <button id="quickChangeProfileConfirmButton" class="btn" onclick="onQuickProfileSelectConfirmed()">Confirm</button>
+            </form>
+        </div>
+    </div>
+</dialog>
+
+<dialog id="newProfileDialog" class="modal modal-bottom sm:modal-middle">
+    <div class="modal-box">
+        <div class="grid grid-cols-1 gap-3">
+            <h3 class="font-bold text-lg">New Profile</h3>
+            <p class="text-sm text-base-content/70">Creates a named profile by copying the current profile tuning, then saves it as the reboot default.</p>
+            <div class="rounded-box bg-base-200 p-3 text-sm">
+                <div class="text-xs text-base-content/70">Source Profile</div>
+                <div id="newProfileSourceLabel" class="font-semibold">Current active profile</div>
+            </div>
+            <div class="grid grid-cols-1 gap-1">
+                <span class="label-text">Profile Name</span>
+                <input id="newProfileNameInput" type="text" class="input input-bordered" maxlength="15" placeholder="H4350">
+            </div>
+            <div class="grid grid-cols-1 gap-1">
+                <span class="label-text">Save Into Slot</span>
+                <select id="newProfileSlotSelect" class="select select-bordered" onchange="updateNewProfileSlotWarning()"></select>
+            </div>
+            <div id="newProfileOverwriteWarning" class="alert alert-warning py-2 text-sm" style="display: none;">
+                <span>This slot already has a named profile. Creating will overwrite that slot.</span>
+            </div>
+        </div>
+        <div class="modal-action">
+            <button type="button" class="btn btn-primary" onclick="onNewProfileConfirmed(event)">Create Profile</button>
+            <form method="dialog">
+                <button class="btn">Cancel</button>
+            </form>
+        </div>
+    </div>
+</dialog>
+
+<dialog id="invalidChargeWeightDialog" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Error</h3>
+        <p class="py-4">Invalid charge weight</p>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<dialog id="overThrowDialog" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Warning</h3>
+        <p class="py-4">Over Throw!</p>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<dialog id="underThrowDialog" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Warning</h3>
+        <p class="py-4">Under Throw!</p>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<dialog id="settingsAppliedSuccessDialog" class="modal">
+    <div class="modal-box" id="settingsAppliedSuccessText">
+        <h3 class="font-bold text-lg">Info</h3>
+        <p class="py-4">Settings Applied</p>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<dialog id="settingsRestoreFailedDialog" class="modal">
+    <div class="modal-box" id="settingsRestoreFailedText">
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<dialog id="scaleZeroedSuccessDialog" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Info</h3>
+        <p class="py-4">Scale Zero Successful</p>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<dialog id="scaleZeroedFailDialog" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Error</h3>
+        <p class="py-4">Failed to Zero Scale</p>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Scripts to support the webapp -->
+<script>
+    const ChargeModeState = Object.freeze({
+        EXIT: 0,
+        WAIT: 1,
+        CHARGING: 2,
+        REMOVE_CUP: 3,
+        RETURN_CUP: 4,
+        STABILIZING: 5,
+    });
+
+    const ChargeModeEvent = Object.freeze({ 
+        NO_EVENT: 1 << 0, 
+        UNDER_CHARGE: 1 << 1, 
+        OVER_CHARGE: 1 << 2, 
+    });
+
+    const ScaleAction = Object.freeze({ 
+        NO_ACTION: 0,
+        FORCE_ZERO: 1,
+    });
+
+    const CleanupModeState = Object.freeze({
+        EXIT: 0,
+        ENTER: 1,
+    });
+
+    const ServoGateState = Object.freeze({
+        GATE_DISABLED: 0,
+        GATE_CLOSE: 1,
+        GATE_OPEN: 2,
+    });
+
+    var pollSetTimeoutId;
+
+    // Set Charge Mode Set Point with REST interface
+    function setChargeWeight() {
+        // Read charge weight
+        const chargeWeight = document.getElementById("chargeWeightInput").value;
+
+        // If the charge weight is empty
+        if (chargeWeight == "") {
+            const errorModal = document.getElementById('invalidChargeWeightDialog');
+            errorModal.showModal();
+
+            return;
+        }
+
+        // Build URI
+        const uri = `/rest/charge_mode_state?s0=${encodeURIComponent(chargeWeight)}&s2=${encodeURIComponent(ChargeModeState.WAIT)}`;
+
+        // Call set charge weight REST
+        fetch(uri)
+        .then(response => {
+            _restartPoll();  // Start the poll immediately to update the charge status
+        })
+        .catch(error => {
+            console.error("Error setting charge weight");
+        });
+    }
+
+    function enterChargeMode(enter) {
+        var charge_mode_status_value = null;
+        if (enter) {
+            charge_mode_status_value = ChargeModeState.WAIT;
+        }
+        else {
+            charge_mode_status_value = ChargeModeState.EXIT;
+        }
+
+        // Build URI
+        const uri = `/rest/charge_mode_state?s2=${encodeURIComponent(charge_mode_status_value)}`;
+
+        // Call set charge weight REST
+        fetch(uri)
+        .then(response => {
+            _restartPoll();  // Start the poll immediately to update the charge status
+        })
+        .catch(error => {
+            console.error("Error setting charge mode status");
+        });
+    }
+
+    // Helper function to update progress widget
+    const PRIMARY_CLASS = "step-primary";
+
+    function _setChargeModeStateWidget(state) {
+        const chargeModeStateWait = document.getElementById("chargeModeStateWait");
+        const chargeModeStateCharging = document.getElementById("chargeModeStateCharging");
+        const chargeModeStateRemoveCup = document.getElementById("chargeModeStateRemoveCup");
+        const chargeModeStateReturnCup = document.getElementById("chargeModeStateReturnCup");
+
+        switch (state) {
+            case ChargeModeState.WAIT:
+                chargeModeStateWait.classList.add(PRIMARY_CLASS);
+                chargeModeStateCharging.classList.remove(PRIMARY_CLASS)
+                chargeModeStateRemoveCup.classList.remove(PRIMARY_CLASS)
+                chargeModeStateRemoveCup.innerText = "Remove Cup";
+                chargeModeStateReturnCup.classList.remove(PRIMARY_CLASS)
+                break;
+            case ChargeModeState.CHARGING:
+                chargeModeStateWait.classList.add(PRIMARY_CLASS);
+                chargeModeStateCharging.classList.add(PRIMARY_CLASS)
+                chargeModeStateRemoveCup.classList.remove(PRIMARY_CLASS)
+                chargeModeStateRemoveCup.innerText = "Remove Cup";
+                chargeModeStateReturnCup.classList.remove(PRIMARY_CLASS)
+                break;
+            case ChargeModeState.STABILIZING:
+                chargeModeStateWait.classList.add(PRIMARY_CLASS);
+                chargeModeStateCharging.classList.add(PRIMARY_CLASS)
+                chargeModeStateRemoveCup.classList.remove(PRIMARY_CLASS)
+                chargeModeStateRemoveCup.innerText = "Settling..."
+                chargeModeStateReturnCup.classList.remove(PRIMARY_CLASS)
+                break;
+            case ChargeModeState.REMOVE_CUP:
+                chargeModeStateWait.classList.add(PRIMARY_CLASS);
+                chargeModeStateCharging.classList.add(PRIMARY_CLASS)
+                chargeModeStateRemoveCup.classList.add(PRIMARY_CLASS)
+                chargeModeStateRemoveCup.innerText = "Remove Cup";
+                chargeModeStateReturnCup.classList.remove(PRIMARY_CLASS)
+                break;
+            case ChargeModeState.RETURN_CUP:
+                chargeModeStateWait.classList.add(PRIMARY_CLASS);
+                chargeModeStateCharging.classList.add(PRIMARY_CLASS)
+                chargeModeStateRemoveCup.classList.add(PRIMARY_CLASS)
+                chargeModeStateRemoveCup.innerText = "Remove Cup";
+                chargeModeStateReturnCup.classList.add(PRIMARY_CLASS)
+                break;
+            case ChargeModeState.EXIT:
+                chargeModeStateWait.classList.remove(PRIMARY_CLASS);
+                chargeModeStateCharging.classList.remove(PRIMARY_CLASS)
+                chargeModeStateRemoveCup.classList.remove(PRIMARY_CLASS)
+                chargeModeStateRemoveCup.innerText = "Remove Cup";
+                chargeModeStateReturnCup.classList.remove(PRIMARY_CLASS)
+                break;
+        }
+    }
+    
+    // Helper function to set the current weight widget
+    function _setCurrentWeight(weight, percentage) {
+        var currentWeightDecimal = document.getElementById("currentWeightDecimal");
+        currentWeightDecimal.innerText = String(weight);
+
+        var currentWeightProgressPencentage = document.getElementById("currentWeightProgressPencentage");
+        currentWeightProgressPencentage.value = percentage;
+    }
+
+    function _setStartStopButtonWidget(isStart) {
+        const confirmButton = document.getElementById("confirmButton");
+        const stopButton = document.getElementById("stopButton");
+
+        if (isStart) {
+            confirmButton.disabled = true;
+            stopButton.disabled = false;
+        }
+        else {
+            stopButton.disabled = true;
+            confirmButton.disabled = false;
+        }
+    }
+
+    function onProfileNameClicked() {
+        const quickChangeProfileDialog = document.getElementById("quickChangeProfileDialog");
+        const quickChangeProfileSelect = document.getElementById("quickChangeProfileSelect");
+
+        // Populate the dialog option and show the modal
+        fetch("/rest/profile_summary")
+        .then(response => {
+            return response.json();
+        })
+        .then(data => {
+            const all_profiles = data["s0"];
+            const current_profile_idx = data["s1"];
+            // First remove existing options
+            var length = quickChangeProfileSelect.options.length;
+            for(var i = 0; i < length; i += 1) {
+                quickChangeProfileSelect.remove(i);     
+            }
+            quickChangeProfileSelect.options.length = 0;
+
+            // Then populate according to the new list
+            for (const idx in all_profiles) {
+                var option = document.createElement("option");
+                option.value = idx;
+                option.innerText = profileDisplayName(idx, all_profiles[idx]);
+                quickChangeProfileSelect.appendChild(option);
+            }
+            // Select the current
+            quickChangeProfileSelect.value = current_profile_idx;
+            
+            // Show the modal
+            quickChangeProfileDialog.showModal();
+        })
+        .catch(error => {
+            console.error("Error reading profile summary");
+        })
+    }
+
+    function profileConfigUrl(idx, options = {}) {
+        const params = new URLSearchParams();
+        params.append('pf', idx);
+        if (options.active) params.append('active', 'true');
+        if (options.save) params.append('ee', 'true');
+        if (options.readOnly) params.append('read_only', 'true');
+        return `/rest/profile_config?${params.toString()}`;
+    }
+
+    function syncProfileSelectors(idx, loadSettingsProfile = true) {
+        _profileCurrentIdx = String(idx);
+        const aiSel = document.getElementById('aiTuningProfileSelect');
+        if (aiSel) aiSel.value = idx;
+        const settingsSel = document.getElementById('select_profile_option');
+        if (settingsSel) {
+            settingsSel.value = idx;
+            if (loadSettingsProfile) populateProfileSelection(settingsSel);
+        }
+        const tricklerSel = document.getElementById('tricklerProfileSelect');
+        if (tricklerSel) tricklerSel.value = idx;
+    }
+
+    function setProfileStatusMessage(message, tone = 'info') {
+        const el = document.getElementById('profileStatusMessage');
+        if (!el) return;
+        el.className = `alert alert-${tone} py-2 text-sm`;
+        el.textContent = '';
+        const span = document.createElement('span');
+        span.innerText = message;
+        el.appendChild(span);
+    }
+
+    function activateProfile(idx, persist = true) {
+        return fetch(profileConfigUrl(idx, { active: true, save: persist }))
+        .then(response => {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.json();
+        })
+        .then(data => {
+            if (data && data.error) throw new Error(data.error);
+            return data;
+        });
+    }
+
+    var _newProfileDialogProfiles = {};
+
+    function isDefaultProfileSlot(idx, name) {
+        const trimmed = String(name || '').trim();
+        return trimmed.length === 0 || trimmed === `Profile${idx}` || trimmed === `#${idx}`;
+    }
+
+    function profileDisplayName(idx, name) {
+        const trimmed = String(name || '').trim();
+        return `${idx}: ${trimmed.length > 0 ? trimmed : 'Empty slot'}`;
+    }
+
+    function populateProfileOptions(select, profiles, selectedIdx) {
+        select.innerHTML = '';
+        for (const idx in profiles) {
+            const option = document.createElement('option');
+            option.value = idx;
+            option.innerText = profileDisplayName(idx, profiles[idx]);
+            select.appendChild(option);
+        }
+        select.value = selectedIdx;
+    }
+
+    function updateNewProfileSlotWarning() {
+        const slotSelect = document.getElementById('newProfileSlotSelect');
+        const warning = document.getElementById('newProfileOverwriteWarning');
+        if (!slotSelect || !warning) return;
+        const idx = slotSelect.value;
+        warning.style.display = isDefaultProfileSlot(idx, _newProfileDialogProfiles[idx]) ? 'none' : 'block';
+    }
+
+    function onNewProfileClicked(event) {
+        if (event) event.preventDefault();
+
+        fetch('/rest/profile_summary')
+        .then(response => {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.json();
+        })
+        .then(data => {
+            const profiles = data['s0'] || {};
+            const currentIdx = String(data['s1']);
+            const slotSelect = document.getElementById('newProfileSlotSelect');
+            const nameInput = document.getElementById('newProfileNameInput');
+            const sourceLabel = document.getElementById('newProfileSourceLabel');
+            const dialog = document.getElementById('newProfileDialog');
+
+            _newProfileDialogProfiles = profiles;
+            populateProfileOptions(slotSelect, profiles, currentIdx);
+            for (const idx in profiles) {
+                if (isDefaultProfileSlot(idx, profiles[idx])) {
+                    slotSelect.value = idx;
+                    break;
+                }
+            }
+
+            if (sourceLabel) {
+                sourceLabel.innerText = profileDisplayName(currentIdx, profiles[currentIdx]);
+            }
+            nameInput.value = '';
+            updateNewProfileSlotWarning();
+            dialog.showModal();
+            setTimeout(() => nameInput.focus(), 0);
+        })
+        .catch(e => {
+            console.error('Error opening new profile dialog:', e);
+            alert('Failed to load profile list: ' + e.message);
+        });
+    }
+
+    function onNewProfileConfirmed(event) {
+        if (event) event.preventDefault();
+
+        const slotSelect = document.getElementById('newProfileSlotSelect');
+        const nameInput = document.getElementById('newProfileNameInput');
+        const dialog = document.getElementById('newProfileDialog');
+        const sourceIdx = _profileCurrentIdx || document.getElementById('select_profile_option')?.value || '0';
+        const targetIdx = slotSelect.value;
+        const profileName = nameInput.value.trim();
+
+        if (profileName.length === 0) {
+            alert('Please enter a profile name.');
+            nameInput.focus();
+            return;
+        }
+        if (!/^[A-Za-z0-9 _.,-]+$/.test(profileName)) {
+            alert('Use letters, numbers, spaces, comma, period, dash, or underscore in profile names.');
+            nameInput.focus();
+            return;
+        }
+        if (!isDefaultProfileSlot(targetIdx, _newProfileDialogProfiles[targetIdx]) &&
+            !confirm(`Overwrite ${profileDisplayName(targetIdx, _newProfileDialogProfiles[targetIdx])}?`)) {
+            return;
+        }
+
+        fetch(profileConfigUrl(sourceIdx, { readOnly: true }))
+        .then(response => {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.json();
+        })
+        .then(sourceProfile => {
+            const params = new URLSearchParams();
+            params.append('pf', targetIdx);
+            params.append('active', 'true');
+            params.append('ee', 'true');
+            for (let idx = 0; idx <= 12; idx += 1) {
+                const key = `p${idx}`;
+                if (sourceProfile[key] !== undefined) {
+                    params.append(key, key === 'p2' ? profileName : sourceProfile[key]);
+                }
+            }
+            return fetch(`/rest/profile_config?${params.toString()}`);
+        })
+        .then(response => {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.json();
+        })
+        .then(data => {
+            if (data && data.error) throw new Error(data.error);
+            if (dialog) dialog.close();
+            _profileCache = null;
+            syncProfileSelectors(targetIdx, true);
+            loadProfileDropdowns();
+            setProfileStatusMessage(`Created "${profileName}" in slot ${targetIdx} and saved it as the reboot default.`, 'success');
+            aiLoadHistory();
+        })
+        .catch(e => {
+            console.error('Error creating profile:', e);
+            alert('Failed to create profile: ' + e.message);
+        });
+    }
+
+    function onTricklerProfileChanged(sel) {
+        const idx = sel.value;
+        activateProfile(idx, true)
+        .then(() => {
+            syncProfileSelectors(idx, true);
+            setProfileStatusMessage(`Active profile ${idx} saved as the reboot default.`, 'success');
+            // Clear ML drop history because each profile has its own learning data.
+            aiLoadHistory();
+        })
+        .catch(e => console.error('Error switching profile:', e));
+    }
+
+    function onQuickProfileSelectConfirmed() {
+        const quickChangeProfileSelect = document.getElementById("quickChangeProfileSelect");
+        const idx = quickChangeProfileSelect.value;
+        activateProfile(idx, true)
+        .then(() => {
+            syncProfileSelectors(idx, true);
+            setProfileStatusMessage(`Active profile ${idx} saved as the reboot default.`, 'success');
+            // Clear ML drop history because each profile has its own learning data.
+            aiLoadHistory();
+        })
+        .catch(error => {
+            console.error("Error setting profile");
+        })
+    }
+
+    // Function to poll charge mode status (weight, progress, etc)
+    function pollChargeModeStatus() {
+        fetch("/rest/charge_mode_state")
+        .then(response => {
+            return response.json()
+        })
+        .then(data => {
+            // console.log(data);
+            // Parse data
+            const charge_weight_set_point = data["s0"];
+            const current_charge_weight = data["s1"];
+            const charge_mode_state = data["s2"];
+            const charge_mode_event = data["s3"];
+            const profile_name = data["s4"];
+            const charge_time_seconds = data["s5"] || "-.--";
+
+            var percentage = 0;
+            if (charge_weight_set_point == 0) {
+                percentage = 0;
+            }
+            else {
+                percentage = current_charge_weight / charge_weight_set_point * 100.0;
+            }
+
+            // Update web element
+            _setCurrentWeight(current_charge_weight, percentage);
+            _setChargeModeStateWidget(charge_mode_state);
+
+            profileName = document.getElementById("profileName");
+            profileName.innerText = String(profile_name);
+            
+            // Find the charge time element and update its text content
+            const chargeTimeElement = document.getElementById('chargeTimeValue');
+            if (chargeTimeElement) {
+                chargeTimeElement.textContent = `${charge_time_seconds} s`;
+            }
+
+            if (charge_mode_state == ChargeModeState.EXIT) {
+                _setStartStopButtonWidget(false);
+            }
+            else {
+                _setStartStopButtonWidget(true);
+            }
+
+            // Process event
+            if (charge_mode_event != ChargeModeEvent.NO_EVENT) {
+                var dialog_name = null;
+                if (charge_mode_event == ChargeModeEvent.UNDER_CHARGE) {
+                    dialog_name = "underThrowDialog";
+                }
+                else if (charge_mode_event == ChargeModeEvent.OVER_CHARGE) {
+                    dialog_name = "overThrowDialog";
+                }
+
+                // Show modal
+                const dialogModal = document.getElementById(dialog_name);
+                if (dialogModal) {
+                    dialogModal.showModal();
+                }
+            }
+        })
+        .catch(error => {
+            console.error("Error reading charge mode settings");
+            _setCurrentWeight("---", 0);
+            _setChargeModeStateWidget(ChargeModeState.WAIT);
+        })
+        .finally(() => {
+            // Poll AI tuning status for live panel
+            pollAiTuningMainPanel();
+            // Schedule the next event
+            clearTimeout(pollSetTimeoutId);
+            pollSetTimeoutId = setTimeout(pollChargeModeStatus, 200);
+        })
+    }
+
+    // Send scale force zero command
+    function scaleForceZero() {
+        const uri = `/rest/scale_action?a0=${encodeURIComponent(ScaleAction.FORCE_ZERO)}`;
+
+        // Call the scale action URI
+        fetch(uri)
+        .then(response => {
+            return response.json();
+        })
+        .then(data => {
+            // console.log(data);
+
+            var scale_action_response = data["a0"];
+
+            if (scale_action_response == ScaleAction.FORCE_ZERO) {
+                const dialogModal = document.getElementById("scaleZeroedSuccessDialog");
+                dialogModal.showModal();
+            }
+            else {
+                const dialogModal = document.getElementById("scaleZeroedFailDialog");
+                dialogModal.showModal();
+        }
+        })
+        .catch(error => {
+            console.error("Error applying force zero");
+        });
+    }
+
+    function servoGateSetState(state) {
+        const uri = `/rest/servo_gate_state?g0=${encodeURIComponent(state)}`;
+
+        // Call the scale action URI
+        fetch(uri)
+        .then(response => {
+            return response.json();
+        })
+        .then(data => {
+            // console.log(data);
+        })
+        .catch(error => {
+            console.error("Error applying servo gate state");
+        });
+    }
+// --- Gate Ratio Support ---
+    function _clamp01(x) {
+        let v = Number(x);
+        if (Number.isNaN(v)) return null;
+        if (v < 0) v = 0;
+        if (v > 1) v = 1;
+        return v;
+    }
+
+    function _setGateRatioUi(r) {
+        const slider = document.getElementById("servoGateRatioSlider");
+        const number = document.getElementById("servoGateRatioNumber");
+
+        if (slider) slider.value = String(Math.round(r * 1000));
+        if (number) number.value = r.toFixed(3);
+    }
+
+    function servoGateSetRatio(ratio) {
+        const r = _clamp01(ratio);
+        if (r === null) return;
+
+        _setGateRatioUi(r);
+
+        const uri = `/rest/servo_gate_state?r0=${encodeURIComponent(r.toFixed(3))}`;
+
+        fetch(uri)
+        .then(response => {
+            return response.json();
+        })
+        .then(data => {
+            // If firmware returns r0 later, you can sync UI like:
+            // if (data["r0"] !== undefined) _setGateRatioUi(_clamp01(data["r0"]));
+        })
+        .catch(error => {
+            console.error("Error applying servo gate ratio");
+        });
+    }
+
+    function onServoGateRatioInput() {
+        const slider = document.getElementById("servoGateRatioSlider");
+        if (!slider) return;
+
+        const r = parseInt(slider.value, 10) / 1000.0;
+        const rc = _clamp01(r);
+        if (rc === null) return;
+
+        _setGateRatioUi(rc);
+    }
+
+    function onServoGateRatioNumberInput() {
+        const number = document.getElementById("servoGateRatioNumber");
+        if (!number) return;
+
+        const r = _clamp01(number.value);
+        if (r === null) return;
+
+        _setGateRatioUi(r);
+    }
+
+    function servoGateApplyRatioFromUi() {
+        const number = document.getElementById("servoGateRatioNumber");
+        if (!number) return;
+
+        servoGateSetRatio(number.value);
+    }
+
+    // Debounced live sending (uses existing debounce())
+    function sendServoGateRatioFromSlider() {
+        const slider = document.getElementById("servoGateRatioSlider");
+        if (!slider) return;
+
+        const r = parseInt(slider.value, 10) / 1000.0;
+        servoGateSetRatio(r);
+    }
+    const debouncedServoGateRatioSend = debounce(sendServoGateRatioFromSlider, 60);
+
+    function sendServoGateRatioFromNumber() {
+        const number = document.getElementById("servoGateRatioNumber");
+        if (!number) return;
+
+        const r = _clamp01(number.value);
+        if (r === null) return;
+
+        servoGateSetRatio(r);
+    }
+    const debouncedServoGateRatioSendFromNumber = debounce(sendServoGateRatioFromNumber, 120);
+    // Switch pages
+    function onNavButtonClicked(button) {
+        const sectionTrickler = document.getElementById("sectionTrickler");
+        const sectionTricklerChargeMode = document.getElementById("sectionTricklerChargeMode");
+        const sectionTricklerCleanUpMode = document.getElementById("sectionTricklerCleanUpMode");
+
+        const sectionSettings = document.getElementById("sectionSettings");
+
+        const settingsNavButton = document.getElementById("settingsNavButton")
+        const purgeNavButton = document.getElementById("purgeNavButton");
+        const tricklerNavButton = document.getElementById("tricklerNavButton");
+        const aiTuningNavButton = document.getElementById("aiTuningNavButton");
+
+        switch (button) {
+            case "trickler":
+                enterCleanUpMode(false);
+
+                // Section control
+                sectionSettings.style.display = "none";
+                sectionTrickler.style.display = "block";
+                sectionTricklerChargeMode.style.display = "block";
+                sectionTricklerCleanUpMode.style.display = "none";
+
+                // Button active control
+                settingsNavButton.classList.remove("active");
+                purgeNavButton.classList.remove("active");
+                aiTuningNavButton.classList.remove("active");
+                tricklerNavButton.classList.add("active");
+
+                // Stop AI history poll when leaving settings
+                _stopAiHistoryPoll();
+
+                // Load profile list
+                loadProfileDropdowns();
+
+                // Restart
+                _restartPoll();
+                break;
+            case "purge":
+                sectionSettings.style.display = "none";
+                sectionTrickler.style.display = "block";
+                sectionTricklerChargeMode.style.display = "none";
+                sectionTricklerCleanUpMode.style.display = "block";
+
+                // Button active control
+                settingsNavButton.classList.remove("active");
+                tricklerNavButton.classList.remove("active");
+                aiTuningNavButton.classList.remove("active");
+                purgeNavButton.classList.add("active");
+                
+                // Restart
+                _restartPoll();
+
+                // Exit Charge mode
+                enterChargeMode(false);
+
+                // Enter clean up mode
+                enterCleanUpMode(true);
+                break;
+            case "settings":
+                sectionTrickler.style.display = "none";
+                sectionSettings.style.display = "block";
+
+                // Button active control
+                tricklerNavButton.classList.remove("active");
+                purgeNavButton.classList.remove("active");
+                aiTuningNavButton.classList.remove("active");
+                settingsNavButton.classList.add("active");
+
+                // Remove polling event
+                clearTimeout(pollSetTimeoutId);
+
+                // Pre-load profile names so dropdowns show names immediately
+                loadProfileDropdowns();
+
+                // Load the first settings
+                onSettingsLinkClicked("settings-scale");
+                
+                break;
+            case "aiTuning":
+                sectionTrickler.style.display = "none";
+                sectionSettings.style.display = "block";
+
+                // Button active control
+                tricklerNavButton.classList.remove("active");
+                purgeNavButton.classList.remove("active");
+                settingsNavButton.classList.remove("active");
+                aiTuningNavButton.classList.add("active");
+
+                // Remove polling event
+                clearTimeout(pollSetTimeoutId);
+
+                // Pre-load profile names
+                loadProfileDropdowns();
+
+                // Navigate directly to AI Tuning settings page
+                onSettingsLinkClicked("settings-ai-tuning");
+                break;
+            default:
+                break;
+        }
+    }
+
+    // Helper function to restart the poll immediately
+    function _restartPoll() {
+        clearTimeout(pollSetTimeoutId);
+        pollSetTimeoutId = setTimeout(pollChargeModeStatus, 0);
+    }
+
+    // Functions show settings page
+    function onSettingsLinkClicked(sectionId) {
+        const targetSection = document.getElementById(sectionId);
+        const settingsSectionTitle = document.getElementById("settingsSectionTitle");
+
+        // Enumerate all sections to set hide/display
+        const sections = document.querySelectorAll('.settings-page');
+
+        // Set visibility
+        for (const section of sections) {
+            if (section.id == targetSection.id) {
+                section.style.display = "block";
+                settingsSectionTitle.innerText = targetSection.getAttribute("name");
+            }
+            else {
+                section.style.display = "none";
+            }
+        }
+        
+        // Close the drawer
+        const settingsDrawer = document.getElementById("settingsDrawer");
+        if (settingsDrawer.checked) {
+            settingsDrawer.checked = false;
+        }
+
+        // Populate values
+        if (sectionId === 'settings-ai-tuning') {
+            loadAiTuningPage();
+            _startAiHistoryPoll();
+        }
+        else if (sectionId === 'settings-firmware-update') {
+            _stopAiHistoryPoll();
+            otaRefreshStatus();
+        }
+        else {
+            _stopAiHistoryPoll();
+            const form = targetSection.querySelector("form");
+            if (form) {
+                // Clear form fields to avoid showing stale values
+                for (const el of form.elements) {
+                    if (el.tagName === 'SELECT' || el.tagName === 'INPUT') {
+                        el.value = '';
+                    }
+                }
+                const uri = form.getAttribute("action");
+                fetch(uri)
+                .then(response => {
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    return response.json();
+                })
+                .then(data => {
+                    // Populate the form
+                    for (const key in data) {
+                        const element = form.querySelector('[name="' + key + '"]');
+                        if (element) {
+                            element.value = String(data[key]);
+                        }
+                    }
+                })
+                .catch(e => {
+                    console.error('Failed to load settings:', e);
+                    alert('Failed to load settings: ' + e.message);
+                });
+            }
+        }
+    }
+
+    // Function to retrieve the profile values when the index is updated
+    function populateProfileSelection(select) {
+        const profileIdx = select.value;
+        const form = select.form;
+
+        fetch(profileConfigUrl(profileIdx, { active: true, save: true }))
+        .then(response => {
+            return response.json();
+        })
+        .then(data => {
+            syncProfileSelectors(profileIdx, false);
+            setProfileStatusMessage(`Active profile ${profileIdx} saved as the reboot default.`, 'success');
+            // Populate the form
+            for (const key in data) {
+                const element = form.querySelector('[name="' + key + '"]');
+                if (element) {
+                    element.value = String(data[key]);
+                }
+            }
+        })
+    }
+
+    // Submit the form data to the action URI
+    function putForm(targetForm, saveToEeprom) {
+        const paramData = new FormData(targetForm);
+        const isProfileForm = targetForm.getAttribute("action") === "/rest/profile_config";
+
+        // Remove empty param
+        for (const [key, value] of paramData.entries()) {
+            if (value == "") {
+                paramData.delete(key);
+            }
+        }
+
+        if (isProfileForm) {
+            paramData.append('active', true);
+        }
+
+        if (saveToEeprom) {
+            paramData.append('ee', true)
+        }
+
+        const queryString = new URLSearchParams(paramData).toString();
+        const uri = new URL(targetForm.action + '?');
+        uri.search = queryString;
+
+        // Post the new param with GET method
+        fetch(uri)
+        .then(response => {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.json();
+        })
+        .then(data => {
+            // Read back and populate form
+            const readUri = isProfileForm
+                ? profileConfigUrl(paramData.get('pf') || data['pf'] || _profileCurrentIdx, { readOnly: true })
+                : targetForm.getAttribute("action");
+            fetch(readUri)
+            .then(response => {
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return response.json();
+            })
+            .then(data => {
+                for (const key in data) {
+                    const element = targetForm.querySelector('[name="' + key + '"]');
+                    if (element) {
+                        element.value = String(data[key]);
+                    }
+                }
+                if (isProfileForm) {
+                    const profileIdx = String(paramData.get('pf') || data['pf'] || _profileCurrentIdx);
+                    _profileCache = null;
+                    syncProfileSelectors(profileIdx, false);
+                    loadProfileDropdowns();
+                    setProfileStatusMessage(saveToEeprom
+                        ? `Profile ${profileIdx} saved to EEPROM and kept as the reboot default.`
+                        : `Profile ${profileIdx} applied for this session. Use Save to EEPROM to keep edits after reboot.`,
+                        saveToEeprom ? 'success' : 'warning');
+                    aiLoadHistory();
+                }
+            })
+            .catch(e => console.error('Failed to read back settings:', e));
+
+            // Show the success modal
+            const settingsAppliedSuccessDialog = document.getElementById("settingsAppliedSuccessDialog");
+            settingsAppliedSuccessDialog.showModal();
+        })
+        .catch(e => {
+            console.error('Failed to save settings:', e);
+            alert('Failed to save settings: ' + e.message);
+        })
+    }
+
+    // Function to populate the dialog when Apply button is pressed for settings
+    const allApplyButtons = document.querySelectorAll(".settings-apply-btn");
+    allApplyButtons.forEach(applyButton => {
+        applyButton.addEventListener("click", (event) => {
+            event.preventDefault();  // Cancel default event
+
+            const form = applyButton.form;
+
+            // Create the dialog
+            const applySettingsDialog = document.getElementById("applySettingsDialog");
+
+            // Update dialog title
+            applySettingsDialogTitle = document.getElementById("applySettingsDialogTitle");
+            const sectioName = form.closest("section").getAttribute("name");
+            applySettingsDialogTitle.innerText = sectioName;
+
+            // Bind the button
+            const dialogApplySettingsButton = document.getElementById("dialogApplySettingsButton");
+            const dialogSaveToEepromButton = document.getElementById("dialogSaveToEepromButton");
+
+            // Bind actions
+            dialogApplySettingsButton.onclick = function() {
+                putForm(form, false);
+            }
+
+            dialogSaveToEepromButton.onclick = function() {
+                putForm(form, true);
+            }
+
+            // Show the dialog
+            applySettingsDialog.showModal();
+        })
+    })
+
+    const allApplySystemControlButton = document.querySelectorAll(".system-control-apply-btn");
+    allApplySystemControlButton.forEach(applyButton => {
+        applyButton.addEventListener("click", (event) => {
+            event.preventDefault();  // Cancel default event
+
+            const form = applyButton.form;
+
+            // Create the dialog
+            const applySettingsDialog = document.getElementById("applySystemControlDialog");
+            const systemControlDialogWarningText = document.getElementById('systemControlDialogWarningText');
+
+            // Update dialog content
+            var formData = new FormData(form);
+            let bodyText = '<ul class="list-disc">';
+            if (formData.get("s4") == 'true') {
+                bodyText += "<li>Save all settings to EEPROM</li>";
+            }
+            if (formData.get("s5") == 'true') {
+                bodyText += "<li>Reboot the OpenTrickler</li>";
+            }
+            if (formData.get("s6") == 'true') {
+                bodyText += "<li>Erase the EEPROM. You cannot undo this action!</li>";
+            }
+            bodyText += "</ul>";
+
+            systemControlDialogWarningText.innerHTML = bodyText;
+
+
+            // Bind the button
+            const dialogApplySettingsButton = document.getElementById("dialogSystemControlApplySettingsButton");
+
+            // Bind actions
+            dialogApplySettingsButton.onclick = function() {
+                putSystemControlForm(form);
+            }
+
+            // Show the dialog
+            applySettingsDialog.showModal();
+        })
+    })
+
+    function putSystemControlForm(targetForm) {
+        const paramData = new FormData(targetForm);
+        for (const [key, value] of paramData.entries()) {
+            if (value == "") paramData.delete(key);
+        }
+        const willReboot = paramData.get("s5") === "true";
+        const queryString = new URLSearchParams(paramData).toString();
+        const uri = new URL(targetForm.action + '?');
+        uri.search = queryString;
+
+        fetch(uri)
+        .then(response => {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.json();
+        })
+        .then(() => {
+            if (willReboot) {
+                alert('Device is rebooting. Please wait a few seconds and refresh the page.');
+            } else {
+                const settingsAppliedSuccessDialog = document.getElementById("settingsAppliedSuccessDialog");
+                settingsAppliedSuccessDialog.showModal();
+            }
+        })
+        .catch(e => {
+            if (willReboot) {
+                // Network error expected during reboot
+                alert('Device is rebooting. Please wait a few seconds and refresh the page.');
+            } else {
+                console.error('Failed to apply system control:', e);
+                alert('Failed to apply: ' + e.message);
+            }
+        });
+    }
+
+    async function otaRefreshStatus() {
+        const statusText = document.getElementById("otaStatusText");
+        const supportStat = document.getElementById("otaSupportStat");
+        const supportDesc = document.getElementById("otaSupportDesc");
+        const stagedStat = document.getElementById("otaStagedStat");
+        const stagedDesc = document.getElementById("otaStagedDesc");
+
+        try {
+            const response = await fetch("/rest/ota_status");
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            const data = await response.json();
+
+            supportStat.innerText = data.supported ? "Ready" : "Not Available";
+            supportStat.className = "stat-value text-lg " + (data.supported ? "text-success" : "text-error");
+            supportDesc.innerText = data.apply_supported
+                ? "WiFi upload and apply are available."
+                : "WiFi upload is available; apply needs a transition firmware.";
+
+            stagedStat.innerText = data.metadata_valid ? "Verified" : "Empty";
+            stagedStat.className = "stat-value text-lg " + (data.metadata_valid ? "text-success" : "text-warning");
+            stagedDesc.innerText = data.metadata_valid
+                ? `${data.staged_size} bytes, CRC ${data.staged_crc32}`
+                : "No verified firmware image staged.";
+
+            statusText.innerText = JSON.stringify(data, null, 2);
+        }
+        catch (e) {
+            statusText.innerText = "Failed to read OTA status: " + e.message;
+        }
+    }
+
+    async function otaApplyStaged() {
+        try {
+            const response = await fetch("/rest/ota_apply");
+            const data = await response.json();
+            await otaRefreshStatus();
+            alert(data.message || data.last_error || JSON.stringify(data));
+        }
+        catch (e) {
+            alert("Apply request did not return cleanly. If the device rebooted, wait a few seconds and refresh. Error: " + e.message);
+        }
+    }
+
+    function debounce(callback, delay) {
+        let timer
+        return function() {
+            clearTimeout(timer)
+            timer = setTimeout(() => {
+                callback();
+            }, delay)
+        }
+    }
+
+    // Update the trickler move speed in cleanup mode based on the slider input
+    function onTricklerSpeedUpdate() {
+        const new_speed = document.getElementById("tricklerSpeedSlider").value;
+        const uri = `/rest/cleanup_mode_state?s1=${encodeURIComponent(new_speed)}`;
+        fetch(uri);
+    }
+    const debouncedOnTricklerSpeedUpdate = debounce(onTricklerSpeedUpdate, 20);
+
+    function onStopCleanupButtonClicked() {
+        document.getElementById("tricklerSpeedSlider").value = "0";
+        const uri = `/rest/cleanup_mode_state?s1=${encodeURIComponent(0)}`;
+        fetch(uri);
+    }
+
+    // Enter or exit the clean up mode
+    function enterCleanUpMode(enter) {
+        var cleanup_state_value = null;
+        if (enter) {
+            cleanup_state_value = CleanupModeState.ENTER;
+        }
+        else {
+            cleanup_state_value = CleanupModeState.EXIT;
+        }
+        const uri = `/rest/cleanup_mode_state?s0=${encodeURIComponent(cleanup_state_value)}`;
+        fetch(uri);
+    }
+
+    async function onExportProfileBtnClicked(event) {
+        // Skip the default response
+        event.preventDefault();
+
+        const config = {};
+
+        // Read metadata
+        let response = await fetch("/rest/system_control");
+        const system_control_data = await response.json();
+        config["unique_id"] = system_control_data["s0"];
+        config["firmware_version"] = system_control_data["s1"];
+        config["vcs_hash"] = system_control_data["s2"];
+        config["config"] = {};
+
+        // get current selected profile
+        const select_profile = document.getElementById("select_profile_option");
+
+        // Fetch data from endpoints
+        const url_string = profileConfigUrl(select_profile.value, { readOnly: true });
+        response = await fetch(url_string);
+        const profile_data = await response.json();
+        config["config"][url_string] = profile_data;
+
+        // download as a file
+        const blob = new Blob([JSON.stringify(config, null, "\t")], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = profile_data["p2"] + ".json"
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    async function onExportConfigClicked() {
+        const config = {};
+
+        const endpoints = [
+            "/rest/scale_config",
+            "/rest/charge_mode_config",
+            "/rest/coarse_motor_config",
+            "/rest/fine_motor_config",
+            "/rest/mini_12864_config",
+            "/rest/wireless_config",
+            "/rest/neopixel_led_config",
+            "/rest/profile_config?pf=0&read_only=true",
+            "/rest/profile_config?pf=1&read_only=true",
+            "/rest/profile_config?pf=2&read_only=true",
+            "/rest/profile_config?pf=3&read_only=true",
+            "/rest/profile_config?pf=4&read_only=true",
+            "/rest/profile_config?pf=5&read_only=true",
+            "/rest/profile_config?pf=6&read_only=true",
+            "/rest/profile_config?pf=7&read_only=true",
+            "/rest/servo_gate_config",
+        ]
+
+        // Read metadata
+        const response = await fetch("/rest/system_control");
+        const system_control_data = await response.json();
+        config["unique_id"] = system_control_data["s0"];
+        config["firmware_version"] = system_control_data["s1"];
+        config["vcs_hash"] = system_control_data["s2"];
+        config["config"] = {};
+
+        // Fetch data from endpoints
+        for (const endpoint of endpoints) {
+            const response = await fetch(endpoint);
+            const data = await response.json();
+            config["config"][endpoint] = data;
+        }
+
+        // download as a file
+        const blob = new Blob([JSON.stringify(config, null, "\t")], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = "opentrickler_"+config["unique_id"]+"_config.json";
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    async function onImportConfigClicked() {
+        const input = document.createElement('input');
+        input.setAttribute('type', 'file')
+        input.setAttribute('multiple', 'false')
+        input.setAttribute('accept', '.json')
+
+        input.onchange = (event) => {
+            const file = event.target.files[0];
+            if (!file) {
+                return;
+            }
+
+            // Setup the callbacks
+            const reader = new FileReader();
+            reader.onload = (event2) => {
+                try {
+                    const data = JSON.parse(reader.result);
+    
+                    // Process data
+                    const source_firmware_version = data["firmware_version"];
+                    const source_unique_id = data["unique_id"];
+                    const source_vcs_hash = data["vcs_hash"];
+                    const config = data["config"];
+
+                    // Restore settings
+                    for (const [endpoint, config_data] of Object.entries(config)) {
+                        const paramData = new FormData();
+                        for (const [key, value] of Object.entries(config_data)) {
+                            paramData.append(key, value);
+                        }
+
+                        // Create URI
+                        const queryString = new URLSearchParams(paramData).toString();
+                        const uri = new URL(endpoint + "?", window.location.origin);
+                        uri.search = queryString;
+                        fetch(uri);
+                    }
+
+                    // Update form
+                    const systemControlForm = document.getElementById("systemControlForm");
+                    systemControlForm.elements["s4"].value = true;  // Save to EEPROM
+                    systemControlForm.elements["s5"].value = true;  // Reboot
+                    
+                    // Prompt user to save and reboot
+                    const applyBtn = document.getElementById("system_control_apply_btn");
+                    applyBtn.click();
+                } 
+                catch (exception) {
+                    console.error(exception);
+
+                    // Show warning 
+                    const settingsRestoreFailedDialog = document.getElementById("settingsRestoreFailedDialog");
+                    const settingsRestoreFailedText = document.getElementById("settingsRestoreFailedText");
+
+                    settingsRestoreFailedText.innerHTML = `<h3 class="font-bold text-lg">Failed to Restore Settings</h3><p class="py-4">${exception}</p>`
+                    settingsRestoreFailedDialog.showModal();
+                }
+            }
+
+            reader.readAsText(file);
+        }
+        input.click();
+    }
+
+    // ---- AI Tuning functions ----
+
+    var _aiLastDropCount = 0;
+    var _aiTuningPollId = null;
+    var _aiHistoryPollId = null;  // Auto-refresh ML history count while on AI Tuning page
+
+    // Profile cache fetched once and reused instantly on every page navigation.
+    var _profileCache = null;   // {idx: name}
+    var _profileCurrentIdx = '0';
+
+    function _applyProfileCache() {
+        const selectors = [
+            document.getElementById('aiTuningProfileSelect'),
+            document.getElementById('select_profile_option'),
+            document.getElementById('tricklerProfileSelect'),
+        ];
+        selectors.forEach(sel => {
+            if (!sel) return;
+            sel.innerHTML = '';
+            for (const idx in _profileCache) {
+                const opt = document.createElement('option');
+                opt.value = idx;
+                const name = (_profileCache[idx] || '').trim();
+                opt.text = profileDisplayName(idx, name);
+                sel.appendChild(opt);
+            }
+            sel.value = _profileCurrentIdx;
+        });
+        setProfileStatusMessage(`Active profile ${_profileCurrentIdx} is the reboot default.`, 'info');
+    }
+
+    // Populate all profile dropdowns. Uses cache if available, fetches once otherwise.
+    function loadProfileDropdowns() {
+        if (_profileCache) {
+            _applyProfileCache();
+            return;
+        }
+        fetch('/rest/profile_summary')
+        .then(r => r.json())
+        .then(data => {
+            _profileCache = data['s0'];
+            _profileCurrentIdx = String(data['s1']);
+            _applyProfileCache();
+        })
+        .catch(e => console.error('Error loading profiles:', e));
+    }
+
+    // Force re-fetch profile list (call after profile rename/add)
+    function reloadProfileDropdowns() {
+        _profileCache = null;
+        loadProfileDropdowns();
+    }
+
+    // Called when AI tuning profile selector changes. Switch active profile in firmware.
+    function onAiTuningProfileChanged(sel) {
+        const idx = sel.value;
+        activateProfile(idx, true)
+        .then(() => {
+            syncProfileSelectors(idx, true);
+            aiLoadHistory();
+            fetch(`/rest/ai_tuning_status?profile_idx=${encodeURIComponent(idx)}`)
+            .then(r => r.json())
+            .then(updateAiTuningUI)
+            .catch(() => {});
+        })
+        .catch(e => console.error('Error switching profile:', e));
+    }
+
+    function _fmtGn(value, digits = 3) {
+        return (value === undefined || value === null || Number.isNaN(Number(value))) ? '-' : `${Number(value).toFixed(digits)}gn`;
+    }
+
+    function _fmtSignedGn(value, digits = 3) {
+        if (value === undefined || value === null || Number.isNaN(Number(value))) return '-';
+        const n = Number(value);
+        return `${n >= 0 ? '+' : ''}${n.toFixed(digits)}gn`;
+    }
+
+    function _setText(id, value) {
+        const el = document.getElementById(id);
+        if (el) el.innerText = value;
+    }
+
+    // Load AI tuning page when navigating to settings-ai-tuning.
+    function loadAiTuningPage() {
+        loadProfileDropdowns();
+        aiLoadAdvancedConfig();
+        aiLoadHistory();
+        _startAiHistoryPoll();
+
+        const aiSel = document.getElementById('aiTuningProfileSelect');
+        const profileIdx = aiSel ? aiSel.value : _profileCurrentIdx;
+        fetch(`/rest/ai_tuning_status?profile_idx=${encodeURIComponent(profileIdx || 0)}`)
+        .then(r => r.json())
+        .then(data => {
+            updateAiTuningUI(data);
+            if (data['is_active']) {
+                _pollAiTuningSettingsPage();
+            }
+        })
+        .catch(() => {});
+    }
+
+    function _startAiHistoryPoll() {
+        _stopAiHistoryPoll();
+        _aiHistoryPollId = setInterval(aiLoadHistory, 5000);
+    }
+    function _stopAiHistoryPoll() {
+        if (_aiHistoryPollId) { clearInterval(_aiHistoryPollId); _aiHistoryPollId = null; }
+    }
+
+    function _setAiChargeModeStateWidget(state) {
+        const wait      = document.getElementById('aiChargeModeStateWait');
+        const charging  = document.getElementById('aiChargeModeStateCharging');
+        const removeCup = document.getElementById('aiChargeModeStateRemoveCup');
+        const returnCup = document.getElementById('aiChargeModeStateReturnCup');
+        if (!wait) return;
+        const P = 'step-primary';
+        wait.classList.add(P);
+        switch (state) {
+            case ChargeModeState.WAIT:
+                charging.classList.remove(P); removeCup.classList.remove(P); removeCup.innerText = 'Remove Cup'; returnCup.classList.remove(P); break;
+            case ChargeModeState.CHARGING:
+                charging.classList.add(P);    removeCup.classList.remove(P); removeCup.innerText = 'Remove Cup'; returnCup.classList.remove(P); break;
+            case ChargeModeState.STABILIZING:
+                charging.classList.add(P);    removeCup.classList.remove(P); removeCup.innerText = 'Settling...'; returnCup.classList.remove(P); break;
+            case ChargeModeState.REMOVE_CUP:
+                charging.classList.add(P);    removeCup.classList.add(P);    removeCup.innerText = 'Remove Cup'; returnCup.classList.remove(P); break;
+            case ChargeModeState.RETURN_CUP:
+                charging.classList.add(P);    removeCup.classList.add(P);    removeCup.innerText = 'Remove Cup'; returnCup.classList.add(P); break;
+            default:
+                wait.classList.remove(P); charging.classList.remove(P); removeCup.classList.remove(P); removeCup.innerText = 'Remove Cup'; returnCup.classList.remove(P); break;
+        }
+    }
+
+    function _pollAiTuningSettingsPage() {
+        const aiSel = document.getElementById('aiTuningProfileSelect');
+        const profileIdx = aiSel ? aiSel.value : _profileCurrentIdx;
+        fetch(`/rest/ai_tuning_status?profile_idx=${encodeURIComponent(profileIdx || 0)}`)
+        .then(r => r.json())
+        .then(tuningData => {
+            updateAiTuningUI(tuningData);
+            const chargeStateDiv = document.getElementById('aiTuningChargeStateDiv');
+            if (tuningData['is_active']) {
+                if (chargeStateDiv) chargeStateDiv.style.display = 'block';
+                fetch('/rest/charge_mode_state')
+                .then(r => r.json())
+                .then(chargeData => {
+                    _setAiChargeModeStateWidget(chargeData['s2']);
+                    const removeCup = document.getElementById('aiChargeModeStateRemoveCup');
+                    if (removeCup && chargeData['s2'] === ChargeModeState.REMOVE_CUP) {
+                        removeCup.innerText = 'Auto Tare';
+                    }
+                })
+                .catch(() => {});
+                _aiTuningPollId = setTimeout(_pollAiTuningSettingsPage, 250);
+            } else {
+                if (chargeStateDiv) chargeStateDiv.style.display = 'none';
+                _aiTuningPollId = null;
+                aiLoadHistory();
+            }
+        })
+        .catch(() => {
+            _aiTuningPollId = setTimeout(_pollAiTuningSettingsPage, 500);
+        });
+    }
+
+    function updateAiTuningUI(data) {
+        const isActive = !!data['is_active'];
+        const isComplete = !!data['is_complete'];
+        const state = data['state'] || 'idle';
+        const dropsCompleted = Number(data['drops_completed'] || 0);
+        const dropsMax = Number(data['drops_max'] || 0);
+        const isError = state === 'error' || !!data['error_message'];
+        const badge = document.getElementById('aiTuningState');
+        if (badge) {
+            badge.innerText = state.replace(/_/g, ' ');
+            badge.className = 'badge';
+            badge.classList.add(isComplete ? 'badge-success' : isActive ? 'badge-primary' : isError ? 'badge-error' : 'badge-neutral');
+        }
+
+        _setText('aiTuningDrops', dropsMax > 0 ? `${dropsCompleted} / ${dropsMax}` : String(dropsCompleted));
+        _setText('aiTuningStatusMessage', data['error_message'] || data['status_message'] || 'Idle');
+        const prog = document.getElementById('aiTuningProgress');
+        if (prog) prog.value = Number(data['progress_percent'] || 0);
+
+        const cycleDiv = document.getElementById('aiCycleReport');
+        const cycleLog = document.getElementById('aiCycleLog');
+        if (cycleDiv) cycleDiv.style.display = (isActive || dropsCompleted > 0 || isComplete) ? 'block' : 'none';
+        if (cycleLog && dropsCompleted > _aiLastDropCount && data['last_drop']) {
+            const d = data['last_drop'];
+            const line = `#${dropsCompleted} ${d.motor_mode || '-'} ${Number(d.speed_rps || 0).toFixed(2)}rps ${Number(d.motor_on_time_ms || 0).toFixed(0)}ms -> ${_fmtGn(d.delivered_weight)} tail ${_fmtGn(d.tail_weight)} err ${_fmtSignedGn(d.overthrow)}\n`;
+            cycleLog.innerText += line;
+            cycleLog.scrollTop = cycleLog.scrollHeight;
+            _aiLastDropCount = dropsCompleted;
+        }
+
+        const plan = data['current_plan'] || {};
+        _setText('aiPlanMotor', plan.motor_mode || '-');
+        _setText('aiPlanSpeed', plan.speed_rps !== undefined ? `${Number(plan.speed_rps).toFixed(2)} rps` : '-');
+        _setText('aiPlanTime', plan.motor_on_time_ms !== undefined ? `${Number(plan.motor_on_time_ms).toFixed(0)} ms` : '-');
+        _setText('aiPlanTarget', _fmtGn(plan.target_weight));
+        _setText('aiPlanBudget', (plan.stage_budget_used_gn !== undefined && plan.stage_budget_limit_gn !== undefined)
+            ? `${Number(plan.stage_budget_used_gn).toFixed(2)} / ${Number(plan.stage_budget_limit_gn).toFixed(2)} gn`
+            : '-');
+        _setText('aiPlanDesc', plan.description || 'Waiting for a run.');
+
+        const last = data['last_drop'] || {};
+        _setText('aiLastMode', last.motor_mode || '-');
+        _setText('aiLastDelivered', _fmtGn(last.delivered_weight));
+        _setText('aiLastTail', _fmtGn(last.tail_weight));
+        _setText('aiLastError', _fmtSignedGn(last.overthrow));
+        _setText('aiLastTime', last.total_time_ms !== undefined
+            ? `Start ${Number(last.start_weight || 0).toFixed(3)}gn, stop ${Number(last.stop_weight || 0).toFixed(3)}gn, final ${Number(last.final_weight || 0).toFixed(3)}gn in ${(Number(last.total_time_ms) / 1000).toFixed(2)}s`
+            : 'No samples yet.');
+
+        const savedModel = data['saved_model'];
+        const model = (isActive || isComplete)
+            ? (data['working_model'] || savedModel || {})
+            : (savedModel || data['working_model'] || {});
+        _setText('aiModelCoarseSpeed', model.coarse_best_speed_rps ? `${Number(model.coarse_best_speed_rps).toFixed(2)} rps` : '-');
+        _setText('aiModelCoarseFlow', model.coarse_best_flow_gps ? `${Number(model.coarse_best_flow_gps).toFixed(3)} gn/s` : '-');
+        _setText('aiModelCoarseTail', _fmtGn(model.coarse_tail_gn));
+        _setText('aiModelCoarseTrimSpeed', model.coarse_trim_speed_rps ? `${Number(model.coarse_trim_speed_rps).toFixed(2)} rps` : '-');
+        _setText('aiModelCoarseTrimTail', _fmtGn(model.coarse_trim_tail_gn));
+        _setText('aiModelFineSpeed', model.fine_best_speed_rps ? `${Number(model.fine_best_speed_rps).toFixed(2)} rps` : '-');
+        _setText('aiModelFineFlow', model.fine_best_flow_gps ? `${Number(model.fine_best_flow_gps).toFixed(3)} gn/s` : '-');
+        _setText('aiModelFineTail', _fmtGn(model.fine_tail_gn));
+        _setText('aiModelFineWindow', _fmtGn(model.recommended_fine_window_gn));
+        _setText('aiModelBias', _fmtSignedGn(model.runtime_bias_gn));
+        const fastConf = Number(model.fine_fast_tail_confidence || 0);
+        const microConf = Number(model.fine_micro_tail_confidence || 0);
+        _setText('aiSteeringTubeProfile', model.fine_tube_profile || '-');
+        _setText('aiSteeringTailConfidence', `${Math.round(Math.max(fastConf, microConf) * 100)}%`);
+        _setText('aiSteeringBulkBias', _fmtSignedGn(model.steering_bulk_bias_gn));
+        _setText('aiSteeringFineBias', _fmtSignedGn(model.steering_fine_bias_gn));
+        _setText('aiSteeringMicroTail', _fmtGn(model.fine_micro_tail_gn));
+        _setText('aiSteeringRecoveryScale', model.steering_recovery_speed_scale !== undefined
+            ? `${(Number(model.steering_recovery_speed_scale) >= 0 ? '+' : '')}${(Number(model.steering_recovery_speed_scale) * 100).toFixed(0)}%`
+            : '-');
+
+        const machine = model.machine_calibration || {};
+        _setText('aiMachineCalStatus', machine.valid ? 'Ready' : 'Missing');
+        _setText('aiMachineScalePeriod', machine.scale_sample_period_ms !== undefined ? `${Number(machine.scale_sample_period_ms).toFixed(0)} ms` : '-');
+        _setText('aiMachineBulkHandoff', _fmtGn(machine.recommended_bulk_handoff_gn));
+        _setText('aiMachineTrimStop', _fmtGn(machine.recommended_trim_stop_gn));
+        _setText('aiMachineCoarseTail', _fmtGn(machine.coarse_tail_p95_gn));
+        _setText('aiMachineFineTail', _fmtGn(machine.fine_tail_p95_gn));
+
+        _setText('aiSavedModelStatus', savedModel && savedModel.valid ? (savedModel.enabled ? 'Saved and active' : 'Saved') : 'No saved model');
+
+        const startBtn = document.getElementById('aiTuningStartBtn');
+        const machineCalBtn = document.getElementById('aiMachineCalStartBtn');
+        const cancelBtn = document.getElementById('aiTuningCancelBtn');
+        const applyBtn = document.getElementById('aiTuningApplyBtn');
+        const undoSteerBtn = document.getElementById('aiSteeringUndoBtn');
+        const profSel = document.getElementById('aiTuningProfileSelect');
+        if (startBtn) startBtn.disabled = isActive;
+        if (machineCalBtn) machineCalBtn.disabled = isActive || !(savedModel && savedModel.valid && savedModel.enabled);
+        if (cancelBtn) cancelBtn.disabled = !isActive;
+        if (applyBtn) applyBtn.disabled = !isComplete;
+        if (undoSteerBtn) undoSteerBtn.disabled = !(savedModel && savedModel.steering_undo_available);
+        if (profSel) profSel.disabled = isActive;
+    }
+
+    function resetAiTuningUI() {
+        _aiLastDropCount = 0;
+        updateAiTuningUI({ is_active: false, is_complete: false, state: 'idle', drops_completed: 0, status_message: 'Idle' });
+        const cycleLog = document.getElementById('aiCycleLog');
+        if (cycleLog) cycleLog.innerText = '';
+        const chargeStateDiv = document.getElementById('aiTuningChargeStateDiv');
+        if (chargeStateDiv) chargeStateDiv.style.display = 'none';
+    }
+
+    // Live panel in trickler section called every 500ms from pollChargeModeStatus.
+    function pollAiTuningMainPanel() {
+        fetch('/rest/ai_tuning_status')
+        .then(r => r.json())
+        .then(data => {
+            const panel = document.getElementById('aiTuningMainPanel');
+            const isActive = !!data['is_active'];
+            if (panel) panel.style.display = isActive ? 'block' : 'none';
+            if (!isActive) return;
+
+            const phaseEl = document.getElementById('aiMainPhase');
+            if (phaseEl) {
+                phaseEl.innerText = (data['state'] || 'running').replace(/_/g, ' ');
+                phaseEl.className = 'badge badge-primary';
+            }
+
+            const plan = data['current_plan'] || {};
+            _setText('aiMainDrop', `${Number(data['drops_completed'] || 0)} / ${Number(data['drops_max'] || 0)}`);
+            _setText('aiMainTesting', plan.speed_rps !== undefined
+                ? `${plan.motor_mode || '-'} ${Number(plan.speed_rps).toFixed(2)}rps ${Number(plan.motor_on_time_ms || 0).toFixed(0)}ms`
+                : (data['status_message'] || '-'));
+
+            const last = data['last_drop'] || {};
+            _setText('aiMainLast', last.total_time_ms !== undefined
+                ? `${_fmtGn(last.delivered_weight)} tail ${_fmtGn(last.tail_weight)} err ${_fmtSignedGn(last.overthrow)}`
+                : 'Waiting for first sample');
+        })
+        .catch(() => {});
+    }
+
+    function onMlRecommendationClicked() {
+        onNavButtonClicked('settings');
+        onSettingsLinkClicked('settings-ai-tuning');
+        setTimeout(() => {
+            const section = document.getElementById('aiRuntimeHistorySection');
+            if (section) section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 300);
+    }
+
+    function aiTuningStart() {
+        const profileSel = document.getElementById('aiTuningProfileSelect');
+        const targetWt = document.getElementById('aiTuningTargetWeight');
+        if (!targetWt || !targetWt.value) { alert('Please enter a target charge weight'); return; }
+        _aiLastDropCount = 0;
+        const cycleLog = document.getElementById('aiCycleLog');
+        if (cycleLog) cycleLog.innerText = '';
+        fetch(`/rest/ai_tuning_start?profile_idx=${encodeURIComponent(profileSel.value)}&target=${encodeURIComponent(targetWt.value)}`)
+        .then(r => r.json())
+        .then(() => {
+            _pollAiTuningSettingsPage();
+        })
+        .catch(e => console.error('Error starting AI tuning:', e));
+    }
+
+    function aiMachineCalibrationStart() {
+        const profileSel = document.getElementById('aiTuningProfileSelect');
+        const targetWt = document.getElementById('aiTuningTargetWeight');
+        if (!targetWt || !targetWt.value) { alert('Please enter your normal target charge weight'); return; }
+        _aiLastDropCount = 0;
+        const cycleLog = document.getElementById('aiCycleLog');
+        if (cycleLog) cycleLog.innerText = '';
+        fetch(`/rest/ai_machine_calibration_start?profile_idx=${encodeURIComponent(profileSel.value)}&target=${encodeURIComponent(targetWt.value)}`)
+        .then(r => r.json())
+        .then(data => {
+            if (data && data.success === false) {
+                alert(data.error || 'Unable to start OpenTrickler calibration');
+                return;
+            }
+            _pollAiTuningSettingsPage();
+        })
+        .catch(e => console.error('Error starting OpenTrickler calibration:', e));
+    }
+
+    function aiTuningCancel() {
+        fetch('/rest/ai_tuning_cancel')
+        .then(r => r.json())
+        .then(() => {
+            if (_aiTuningPollId) { clearTimeout(_aiTuningPollId); _aiTuningPollId = null; }
+            resetAiTuningUI();
+        })
+        .catch(e => console.error('Error cancelling AI tuning:', e));
+    }
+
+    function aiTuningApply() {
+        fetch('/rest/ai_tuning_apply')
+        .then(r => r.json())
+        .then(() => {
+            const dialog = document.getElementById('settingsAppliedSuccessDialog');
+            if (dialog) dialog.showModal();
+            aiLoadHistory();
+            fetch('/rest/ai_tuning_status')
+            .then(r => r.json())
+            .then(updateAiTuningUI)
+            .catch(() => {});
+        })
+        .catch(e => console.error('Error saving AI model:', e));
+    }
+
+    function aiSteering(action) {
+        const profileSel = document.getElementById('aiTuningProfileSelect');
+        const profileIdx = profileSel ? profileSel.value : (_profileCurrentIdx || 0);
+        fetch(`/rest/ai_steering?profile_idx=${encodeURIComponent(profileIdx)}&action=${encodeURIComponent(action)}`)
+        .then(r => r.json())
+        .then(data => {
+            if (data && data.success === false) {
+                alert(data.error || 'Steering failed');
+                return;
+            }
+            loadAiTuningPage();
+        })
+        .catch(e => console.error('Error applying AI steering:', e));
+    }
+
+    const _aiCfgDefaults = {
+        coarse_budget_gn: 150,
+        fine_budget_gn: 40,
+        coarse_sample_count: 6,
+        fine_sample_count: 6,
+        coarse_sample_target_gn: 10,
+        fine_sample_target_gn: 2,
+        noise_margin: 0.05,
+        time_cost_weight: 1.0,
+        error_cost_weight: 8.0,
+    };
+    const _aiCfgFieldMap = {
+        'coarse_budget_gn': 'aiCfgCoarseBudget',
+        'fine_budget_gn': 'aiCfgFineBudget',
+        'coarse_sample_count': 'aiCfgCoarseSamples',
+        'fine_sample_count': 'aiCfgFineSamples',
+        'coarse_sample_target_gn': 'aiCfgCoarseTarget',
+        'fine_sample_target_gn': 'aiCfgFineTarget',
+        'noise_margin': 'aiCfgNoiseMargin',
+        'time_cost_weight': 'aiCfgTimeWeight',
+        'error_cost_weight': 'aiCfgErrorWeight',
+    };
+
+    function _applyAiCfgToForm(data) {
+        for (const [key, elId] of Object.entries(_aiCfgFieldMap)) {
+            const el = document.getElementById(elId);
+            if (!el) continue;
+            const val = (data && data[key] !== undefined) ? data[key] : _aiCfgDefaults[key];
+            el.value = val;
+        }
+    }
+
+    function aiLoadAdvancedConfig() {
+        fetch('/rest/ai_tuning_config')
+        .then(r => r.json())
+        .then(data => _applyAiCfgToForm(data))
+        .catch(() => _applyAiCfgToForm(null));
+    }
+
+    function aiTuningSaveAdvancedConfig() {
+        const params = new URLSearchParams();
+        for (const [key, elId] of Object.entries(_aiCfgFieldMap)) {
+            const el = document.getElementById(elId);
+            if (el && el.value !== '') params.append(key, el.value);
+        }
+        fetch(`/rest/ai_tuning_config_set?${params.toString()}`)
+        .then(r => r.json())
+        .then(() => {
+            const d = document.getElementById('settingsAppliedSuccessDialog');
+            if (d) d.showModal();
+        })
+        .catch(e => console.error('Error saving AI config:', e));
+    }
+
+    function aiLoadHistory() {
+        const aiSel = document.getElementById('aiTuningProfileSelect');
+        const profileIdx = aiSel ? aiSel.value : _profileCurrentIdx;
+        fetch(`/rest/ai_tuning_history?profile_idx=${encodeURIComponent(profileIdx || 0)}`)
+        .then(r => r.json())
+        .then(data => {
+            const observations = Array.isArray(data['observations']) ? data['observations'] : [];
+            const countEl = document.getElementById('aiHistoryCount');
+            if (countEl) countEl.innerText = `${observations.length} obs`;
+
+            const tbody = document.getElementById('aiHistoryTableBody');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+            if (observations.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="text-center text-gray-500">No runtime history yet</td></tr>';
+                return;
+            }
+
+            observations.forEach((obs, i) => {
+                const err = Number(obs.final_error_gn || 0);
+                const errClass = err > 0.02 ? 'text-error' : err < -0.02 ? 'text-warning' : 'text-success';
+                const row = document.createElement('tr');
+                row.innerHTML = `<td>${i + 1}</td><td>${Number(obs.target_weight || 0).toFixed(2)}gn</td><td class="${errClass}">${_fmtSignedGn(err)}</td><td>${(Number(obs.total_time_ms || 0) / 1000).toFixed(2)}s</td>`;
+                tbody.appendChild(row);
+            });
+        })
+        .catch(e => console.error('Error loading AI history:', e));
+    }
+
+    function aiClearHistory() {
+        fetch('/rest/ai_tuning_clear_history')
+        .then(r => r.json())
+        .then(() => aiLoadHistory())
+        .catch(e => console.error('Error clearing AI history:', e));
+    }
+
+    function aiApplyRefinedParams() {
+        aiTuningApply();
+    }
+
+    // Start the long polling process when the page loads
+    if (document.readyState != "loading") {
+        onNavButtonClicked('trickler');
+    }
+    else {
+        document.addEventListener('DOMContentLoaded', function() {onNavButtonClicked('trickler');});
+    }
+
+</script>
+
+</body>
+
+</html>

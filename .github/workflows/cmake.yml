@@ -1,0 +1,66 @@
+name: Firmware Build
+
+run-name: Firmware build for ${{ github.ref_name }} by @${{ github.actor }}
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.board }} Release
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        board:
+          - pico_w
+          - pico2_w
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            gcc-arm-none-eabi \
+            libnewlib-arm-none-eabi \
+            libstdc++-arm-none-eabi-newlib \
+            ninja-build \
+            python3
+
+      - name: Configure
+        run: |
+          cmake -B "${{ github.workspace }}/build-${{ matrix.board }}" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPICO_BOARD=${{ matrix.board }}
+
+      - name: Build
+        run: cmake --build "${{ github.workspace }}/build-${{ matrix.board }}" --config Release
+
+      - name: Upload firmware outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: opentrickler-${{ matrix.board }}-release
+          if-no-files-found: error
+          path: |
+            src/generated/version.c
+            build-${{ matrix.board }}/*.bin
+            build-${{ matrix.board }}/*.elf
+            build-${{ matrix.board }}/*.hex
+            build-${{ matrix.board }}/*.uf2

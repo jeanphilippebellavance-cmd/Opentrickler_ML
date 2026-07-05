@@ -1,0 +1,34 @@
+; 13 cycles at low
+.pio_version 0
+.program stepper
+.side_set 1 opt
+init:
+    pull noblock   side 0 ; Read new period from TX FIFO, if no new value then copy from X (previous period)
+                          ; Also set the STEP pin to low
+    mov x, osr            ; Copy the value back from the OSR to X
+    jmp !x init           ; If no X is provided then wrap back to the beginning
+
+    ; Delay (4 + 1 + 4 + 1) cycles (10x8ns=80ns)
+    nop [4]
+    nop [4]
+
+    ; At this point we have dwelled 13 cycles (13*8=104 ns), fufilled typ dwell time at low
+    mov y, x       side 1 ; 
+
+hold_high:                ; Wait for the counter
+    jmp y-- hold_high     ; Hold high while looping
+
+
+% c-sdk {
+static inline void stepper_program_init(PIO pio, uint sm, uint offset, uint pin) {
+   pio_gpio_init(pio, pin);
+
+   // Set STEP pin as the output
+   pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+   pio_sm_config c = stepper_program_get_default_config(offset);
+
+   // Use side_step control to save few state machine cycles
+   sm_config_set_sideset_pins(&c, pin);
+   pio_sm_init(pio, sm, offset, &c);
+}
+%}

@@ -1,0 +1,105 @@
+# Prerequisites
+*.d
+
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Kernel Module Compile Results
+*.mod*
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+Mkfile.old
+dkms.conf
+
+# CMake stuff
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeFiles
+CMakeScripts
+Testing
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps
+
+# VSCode stuff
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+
+# Local History for Visual Studio Code
+.history/
+
+# Built Visual Studio Code Extensions
+*.vsix
+
+# Build directory
+build*/
+*.bin
+*.uf2
+*.dis
+
+# Local OpenTrickler telemetry captures
+flight_logs/
+collector_runtime_logs/
+.agents/
+__pycache__/
+*.pyc
+
+# Local packaging and telemetry tools that are not published in this firmware repo
+dist/
+tools/field_data_kit/
+tools/opentrickler_flight_recorder.py
+tools/package_field_data_collector*.ps1
+
+# Public-safe release notes stay tracked; generated artifacts and private evidence do not.
+firmware_release_history/**/artifacts/
+firmware_release_history/**/manifest.json
+firmware_release_history/external_comparisons/
+firmware_release_history/legacy_artifacts.csv
+firmware_release_history/session_index.md
