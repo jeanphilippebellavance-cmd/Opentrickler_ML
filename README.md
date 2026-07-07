@@ -126,7 +126,7 @@ Calibration is most useful after hardware changes, tube changes, scale changes, 
 Install Git, CMake, Ninja, the ARM GCC toolchain, Python 3, and the Raspberry Pi Pico SDK. The included PowerShell helper expects the Pico SDK environment used by the Raspberry Pi Pico extension.
 
 ```powershell
-git clone https://github.com/jeanphilippebellavance-cmd/Opentrickler_ML.git
+git clone <repository-url-from-the-github-code-button>
 cd Opentrickler_ML
 git submodule update --init --recursive
 .\configure_env.ps1
