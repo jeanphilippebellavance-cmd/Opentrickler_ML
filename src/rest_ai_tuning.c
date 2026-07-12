@@ -634,6 +634,8 @@ bool http_rest_ai_tuning_history(struct fs_file *file, int num_params,
                       "\"recovery_over_rate\":%.4f,\"coarse_late_count\":%u,"
                       "\"coarse_late_rate\":%.4f,\"recovery_count\":%u,"
                       "\"recovery_use_rate\":%.4f,\"median_recovery_motor_ms\":%.1f,"
+                      "\"recovery_flow_count\":%u,\"recovery_flow_p25_gps\":%.4f,"
+                      "\"recovery_flow_median_gps\":%.4f,"
                       "\"median_total_time_ms\":%.1f,\"over_rate\":%.4f,"
                       "\"under_rate\":%.4f}",
                       runtime_stats_valid ? "true" : "false",
@@ -663,6 +665,9 @@ bool http_rest_ai_tuning_history(struct fs_file *file, int num_params,
                       runtime_stats.recovery_count,
                       runtime_stats.recovery_use_rate,
                       runtime_stats.median_recovery_motor_ms,
+                      runtime_stats.recovery_flow_count,
+                      runtime_stats.recovery_flow_p25_gps,
+                      runtime_stats.recovery_flow_median_gps,
                       runtime_stats.median_total_time_ms,
                       runtime_stats.over_rate,
                       runtime_stats.under_rate)) {

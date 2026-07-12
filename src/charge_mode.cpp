@@ -144,6 +144,7 @@ static float live_recovery_start_weight_gn = NAN;
 static float live_recovery_end_weight_gn = NAN;
 static uint32_t live_recovery_motor_on_ms = 0;
 static uint32_t live_recovery_stall_count = 0;
+static uint32_t live_recovery_pulse_count = 0;
 static uint8_t live_recovery_exit_reason = RECOVERY_EXIT_NONE;
 static uint32_t live_bulk_deadline_ms = 0;
 static float live_coarse_command_rps = 0.0f;
@@ -186,6 +187,7 @@ static void charge_mode_reset_live_metrics(void) {
     live_recovery_end_weight_gn = NAN;
     live_recovery_motor_on_ms = 0;
     live_recovery_stall_count = 0;
+    live_recovery_pulse_count = 0;
     live_recovery_exit_reason = RECOVERY_EXIT_NONE;
     live_bulk_deadline_ms = 0;
     live_coarse_command_rps = 0.0f;
@@ -1295,6 +1297,29 @@ void charge_mode_wait_for_complete() {
         return latest;
     };
 
+    auto observe_coarse_tail_drain = [&](uint32_t watch_ms, float fallback_value) -> float {
+        TickType_t start_tick = xTaskGetTickCount();
+        float latest = fallback_value;
+        float highest = fallback_value;
+
+        while ((uint32_t)((xTaskGetTickCount() - start_tick) * portTICK_PERIOD_MS) < watch_ms) {
+            if (button_wait_for_input(false) == BUTTON_RST_PRESSED) {
+                emergency_exit();
+                return highest;
+            }
+
+            float measurement = latest;
+            if (scale_block_wait_for_next_measurement(120, &measurement) &&
+                charge_mode_is_valid_scale_measurement(measurement) &&
+                !charge_mode_is_cup_removed_measurement(measurement)) {
+                latest = measurement;
+                highest = fmaxf(highest, measurement);
+            }
+        }
+
+        return highest;
+    };
+
     auto update_coarse_tail_telemetry = [&](float stop_weight, float settled_weight) {
         if (charge_mode_is_valid_scale_measurement(settled_weight)) {
             live_after_coarse_settle_weight_gn = settled_weight;
@@ -1777,9 +1802,9 @@ void charge_mode_wait_for_complete() {
                     fmaxf(production_fast_tail_guard,
                           fminf(production_fast_tail_cap, fine_tail_cap));
 
-                fine_tail = production_fine_can_tighten
-                    ? production_fast_tail_guard
-                    : fmaxf(fine_tail, production_fast_tail_guard);
+                // Characterization supplies speed and a conservative fallback.
+                // Once production evidence exists, its percentile guard owns the stop.
+                fine_tail = production_fast_tail_guard;
             }
 
             float learned_micro_tail = isfinite(runtime_model.fine_micro_tail_gn)
@@ -2000,6 +2025,8 @@ void charge_mode_wait_for_complete() {
             TickType_t recovery_motor_start_tick = 0;
             TickType_t recovery_last_progress_tick = 0;
             bool recovery_motor_running = false;
+            uint8_t recovery_pulse_count = 0;
+            uint8_t recovery_no_progress_count = 0;
             const float micro_heal_entry_gn = fmaxf(0.18f, target_tolerance * 7.0f);
             const float recovery_force_feed_gn = fmaxf(0.030f, target_tolerance * 1.55f);
             const float production_fine_stop_floor = production_fine_ready
@@ -2114,101 +2141,24 @@ void charge_mode_wait_for_complete() {
                 charge_mode_set_live_phase("trim", remaining_weight, trim_stop_margin);
             };
 
-            auto run_guarded_coarse_topup = [&](float settled_weight) -> float {
-                if (have_trim_coarse ||
-                    machine_coarse_tail_guard <= 0.0f ||
-                    !charge_mode_is_valid_scale_measurement(settled_weight) ||
+            auto settle_complete_coarse_tail = [&](float stop_weight,
+                                                    float settled_weight) -> float {
+                if (!charge_mode_is_valid_scale_measurement(settled_weight) ||
                     charge_mode_config.charge_mode_state == CHARGE_MODE_EXIT) {
                     return settled_weight;
                 }
 
-                // Continuous coarse trim is unsafe on high-tail powders, but a few
-                // bounded top-up bursts can move work away from the fine tube while
-                // preserving the settle-after-each-burst safety behavior.
-                const float reserve_gn =
-                    fmaxf(fine_window + 4.60f,
-                          fminf(machine_coarse_tail_guard * 0.62f + fine_window,
-                                fmaxf(7.20f, target_weight * 0.24f)));
-                const float topup_goal_weight = final_target - reserve_gn;
-                if (settled_weight >= topup_goal_weight) {
-                    return settled_weight;
-                }
-
-                float pulse_speed = trim_speed > 0.0f
-                    ? trim_speed * 0.32f
-                    : bulk_speed * 0.28f;
-                pulse_speed = fmaxf(coarse_trickler_min_speed,
-                                    fminf(pulse_speed,
-                                          fminf(bulk_speed * 0.36f, 2.35f)));
-
-                float estimated_flow =
-                    bulk_phase_flow * (pulse_speed / fmaxf(bulk_speed, 0.001f)) * 0.60f;
-                if (machine_calibrated &&
-                    runtime_model.machine.trim_open_loop_flow_gps > 0.05f &&
-                    trim_speed > 0.0f) {
-                    float trim_scaled_flow =
-                        runtime_model.machine.trim_open_loop_flow_gps *
-                        (pulse_speed / fmaxf(trim_speed, 0.001f)) * 0.58f;
-                    estimated_flow = fmaxf(estimated_flow, trim_scaled_flow);
-                }
-                estimated_flow = fmaxf(0.35f, fminf(estimated_flow, 4.50f));
-
-                for (uint8_t topup_idx = 0; topup_idx < 2; topup_idx++) {
-                    float gap_to_goal = topup_goal_weight - settled_weight;
-                    if (gap_to_goal <= fmaxf(0.85f, target_tolerance * 6.0f)) {
-                        break;
-                    }
-
-                    float desired_drop =
-                        fminf(gap_to_goal * 0.42f,
-                              fmaxf(0.85f, target_weight * 0.045f));
-                    uint32_t pulse_ms = (uint32_t)lroundf(
-                        (desired_drop / fmaxf(estimated_flow, 0.05f)) * 1000.0f);
-                    uint32_t pulse_cap_ms = topup_idx == 0 ? 760u : 560u;
-                    pulse_ms = (uint32_t)fmaxf(140.0f,
-                                               fminf((float)pulse_ms,
-                                                     (float)pulse_cap_ms));
-
-                    charge_mode_set_live_phase("coarse_topup",
-                                               final_target - settled_weight,
-                                               reserve_gn);
-                    if (!run_motor_for_duration(SELECT_COARSE_TRICKLER_MOTOR,
-                                                pulse_speed,
-                                                pulse_ms)) {
-                        return settled_weight;
-                    }
-
-                    float stop_weight = capture_coarse_stop_measurement(180, NAN);
-                    mark_coarse_stop(stop_weight, true);
-                    float new_settled = wait_for_settled_measurement(
-                        720,
-                        charge_mode_is_valid_scale_measurement(stop_weight)
-                            ? stop_weight
-                            : settled_weight);
-                    update_coarse_tail_telemetry(stop_weight, new_settled);
-                    if (charge_mode_config.charge_mode_state == CHARGE_MODE_EXIT) {
-                        return new_settled;
-                    }
-                    if (!charge_mode_is_valid_scale_measurement(new_settled)) {
-                        break;
-                    }
-
-                    float delivered = new_settled - settled_weight;
-                    settled_weight = new_settled;
-                    if (delivered > 0.05f) {
-                        float observed_flow = delivered / ((float)pulse_ms / 1000.0f);
-                        estimated_flow = estimated_flow * 0.35f +
-                                         fminf(observed_flow, 8.0f) * 0.65f;
-                        if (delivered > desired_drop * 2.20f) {
-                            break;
-                        }
-                    }
-                    else {
-                        estimated_flow = fmaxf(0.35f, estimated_flow * 0.72f);
-                    }
-                }
-
-                return settled_weight;
+                uint32_t watch_ms = machine_calibrated &&
+                                    isfinite(runtime_model.machine.coarse_settle_ms)
+                    ? (uint32_t)lroundf(runtime_model.machine.coarse_settle_ms)
+                    : 900u;
+                watch_ms = (uint32_t)fmaxf(800.0f, fminf((float)watch_ms, 1400.0f));
+                charge_mode_set_live_phase("coarse_settle",
+                                           final_target - settled_weight,
+                                           fine_window);
+                float drained_weight = observe_coarse_tail_drain(watch_ms, settled_weight);
+                update_coarse_tail_telemetry(stop_weight, drained_weight);
+                return drained_weight;
             };
 
             if (bulk_running) {
@@ -2271,12 +2221,9 @@ void charge_mode_wait_for_complete() {
                         mark_coarse_stop(stop_weight, false);
                     }
                     float settled_weight = wait_for_settled_measurement(520, stop_weight);
-                    update_coarse_tail_telemetry(stop_weight, settled_weight);
+                    settled_weight = settle_complete_coarse_tail(stop_weight, settled_weight);
                     if (charge_mode_config.charge_mode_state == CHARGE_MODE_EXIT) {
                         return;
-                    }
-                    if (!have_trim_coarse) {
-                        settled_weight = run_guarded_coarse_topup(settled_weight);
                     }
                     float remaining_after_bulk = final_target - settled_weight;
                     previous_weight = settled_weight;
@@ -2377,12 +2324,9 @@ void charge_mode_wait_for_complete() {
                             mark_coarse_stop(stop_weight, false);
                         }
                         current_weight = wait_for_settled_measurement(650, stop_weight);
-                        update_coarse_tail_telemetry(stop_weight, current_weight);
+                        current_weight = settle_complete_coarse_tail(stop_weight, current_weight);
                         if (charge_mode_config.charge_mode_state == CHARGE_MODE_EXIT) {
                             return;
-                        }
-                        if (!have_trim_coarse) {
-                            current_weight = run_guarded_coarse_topup(current_weight);
                         }
                         remaining_weight = final_target - current_weight;
                         previous_weight = current_weight;
@@ -2400,12 +2344,9 @@ void charge_mode_wait_for_complete() {
                         mark_coarse_stop(stop_weight, true);
                         charge_mode_command_motor(SELECT_FINE_TRICKLER_MOTOR, 0);
                         current_weight = wait_for_settled_measurement(550, stop_weight);
-                        update_coarse_tail_telemetry(stop_weight, current_weight);
+                        current_weight = settle_complete_coarse_tail(stop_weight, current_weight);
                         if (charge_mode_config.charge_mode_state == CHARGE_MODE_EXIT) {
                             return;
-                        }
-                        if (!have_trim_coarse) {
-                            current_weight = run_guarded_coarse_topup(current_weight);
                         }
                         remaining_weight = final_target - current_weight;
                         previous_weight = current_weight;
@@ -2829,120 +2770,130 @@ void charge_mode_wait_for_complete() {
                         recovery_last_progress_tick = xTaskGetTickCount();
                         live_recovery_end_weight_gn = current_weight;
                     }
-                    const bool pulse_recovery_active =
-                        micro_heal_active && (high_tail_tube || recovery_guard_active);
-                    if (pulse_recovery_active) {
-                        const bool guarded_balanced_recovery =
-                            recovery_guard_active && !high_tail_tube;
-                        float micro_target_margin = guarded_balanced_recovery
-                            ? fmaxf(target_tolerance * 1.10f,
-                                    fminf(0.075f,
-                                          learned_micro_tail * 0.75f +
-                                              target_tolerance * 0.45f))
-                            : fmaxf(target_tolerance * 0.85f,
-                                    fminf(0.055f,
-                                          fmaxf(learned_micro_tail * 0.45f,
-                                                target_tolerance * 0.90f)));
-                        if (recovery_must_feed) {
-                            micro_target_margin = fminf(micro_target_margin,
-                                                        target_tolerance *
-                                                            (guarded_balanced_recovery ? 0.90f : 0.80f));
-                        }
-                        float desired_add_gn = remaining_weight - micro_target_margin;
-                        if (desired_add_gn <= 0.0f) {
-                            desired_add_gn = fmaxf(0.0f, remaining_weight - target_tolerance * 0.70f);
-                        }
+                    command_recovery_fine_motor(0);
 
-                        if (desired_add_gn <= 0.003f && !recovery_must_feed) {
-                            charge_mode_command_motor(SELECT_FINE_TRICKLER_MOTOR, 0);
-                            current_weight = wait_for_settled_measurement(850, current_weight);
-                            mark_fine_stop(current_weight, current_weight);
-                            if (charge_mode_is_valid_scale_measurement(current_weight)) {
-                                charge_mode_update_true_final_measurement(current_weight);
-                                live_recovery_end_weight_gn = current_weight;
-                            }
-                            float after_wait_under = target_weight - current_weight;
-                            if (charge_mode_is_valid_scale_measurement(current_weight) &&
-                                after_wait_under > target_tolerance &&
-                                (uint32_t)((xTaskGetTickCount() - final_recovery_start_tick) *
-                                           portTICK_PERIOD_MS) < 30000u) {
-                                previous_weight = current_weight;
-                                older_weight = current_weight;
-                                previous_sample_tick = 0;
-                                previous_sample_period_s = 0.0f;
-                                continue;
-                            }
-                            live_recovery_exit_reason =
-                                current_weight - target_weight > target_tolerance
-                                    ? RECOVERY_EXIT_OVER
-                                    : RECOVERY_EXIT_TOLERANCE;
-                            break;
-                        }
+                    const bool approach_zone = remaining_weight > micro_heal_entry_gn;
+                    const bool middle_zone = !approach_zone && remaining_weight > 0.060f;
+                    float target_margin = approach_zone
+                        ? fmaxf(0.100f, learned_tail_guard)
+                        : (middle_zone
+                               ? fmaxf(0.035f, target_tolerance * 1.35f)
+                               : target_tolerance * 0.65f);
+                    float desired_add_gn = fmaxf(0.0f, remaining_weight - target_margin);
 
-                        float dose_factor = guarded_balanced_recovery
-                            ? (remaining_weight > 0.09f ? 0.38f : 0.30f)
-                            : (remaining_weight > 0.09f ? 0.58f : 0.45f);
-                        uint32_t micro_dose_ms = (uint32_t)lroundf(
-                            (desired_add_gn / fmaxf(recovery_micro_flow, 0.012f)) *
-                            1000.0f *
-                            dose_factor);
-                        uint32_t micro_max_ms = guarded_balanced_recovery
-                            ? (remaining_weight < 0.050f
-                                   ? 180u
-                                   : (remaining_weight < 0.085f ? 300u : 500u))
-                            : (remaining_weight < 0.050f
-                                   ? 260u
-                                   : (remaining_weight < 0.085f ? 450u : 700u));
-                        micro_dose_ms = (uint32_t)fmaxf(guarded_balanced_recovery ? 60.0f : 70.0f,
-                                                        fminf((float)micro_max_ms,
-                                                              (float)micro_dose_ms));
-
-                        float fine_stop_weight = current_weight;
-                        command_recovery_fine_motor(recovery_micro_speed);
-                        if (!wait_with_abort(micro_dose_ms)) {
-                            live_recovery_exit_reason = RECOVERY_EXIT_ABORT;
-                            return;
-                        }
-                        command_recovery_fine_motor(0);
-
-                        float stop_weight = get_latest_measurement(120, fine_stop_weight);
-                        current_weight = wait_for_settled_measurement(850, stop_weight);
-                        mark_fine_stop(stop_weight, current_weight);
+                    if (desired_add_gn <= 0.003f && !recovery_must_feed) {
+                        current_weight = wait_for_settled_measurement(700, current_weight);
                         if (charge_mode_is_valid_scale_measurement(current_weight)) {
                             charge_mode_update_true_final_measurement(current_weight);
                             live_recovery_end_weight_gn = current_weight;
                         }
-                        if (charge_mode_config.charge_mode_state == CHARGE_MODE_EXIT) {
-                            return;
-                        }
-
-                        float settled_under_weight = target_weight - current_weight;
-                        if (charge_mode_is_valid_scale_measurement(current_weight) &&
-                            current_weight - target_weight > target_tolerance) {
-                            live_recovery_exit_reason = RECOVERY_EXIT_OVER;
-                            break;
-                        }
-                        if (charge_mode_is_valid_scale_measurement(current_weight) &&
-                            settled_under_weight <= target_tolerance) {
+                        float after_wait_under = target_weight - current_weight;
+                        if (after_wait_under <= target_tolerance) {
                             live_recovery_exit_reason = RECOVERY_EXIT_TOLERANCE;
                             break;
                         }
-                        uint32_t recovery_elapsed_ms =
-                            (uint32_t)((xTaskGetTickCount() - final_recovery_start_tick) *
-                                       portTICK_PERIOD_MS);
-                        if (recovery_elapsed_ms >= 30000u &&
-                            live_recovery_motor_on_ms >= 3000u) {
-                            live_recovery_exit_reason = RECOVERY_EXIT_TIMEOUT;
-                            break;
-                        }
-
-                        previous_weight = current_weight;
-                        older_weight = current_weight;
-                        previous_sample_tick = 0;
-                        previous_sample_period_s = 0.0f;
-                        continue;
+                        desired_add_gn = fmaxf(0.004f,
+                                               after_wait_under - target_tolerance * 0.65f);
                     }
-                    command_recovery_fine_motor(curved_speed);
+
+                    float dose_speed = recovery_micro_speed;
+                    if (approach_zone) {
+                        dose_speed = fmaxf(0.35f, fine_speed * 0.18f);
+                        dose_speed = fminf(dose_speed, fminf(1.20f, fine_speed));
+                    }
+                    else if (middle_zone) {
+                        dose_speed = fmaxf(0.20f, fine_speed * 0.065f);
+                        dose_speed = fminf(dose_speed, fminf(0.45f, fine_speed));
+                    }
+                    else {
+                        dose_speed = fmaxf(0.18f, dose_speed);
+                        dose_speed = fminf(dose_speed, fminf(0.25f, fine_speed));
+                    }
+                    dose_speed = fmaxf(fine_trickler_min_speed, dose_speed);
+
+                    float dose_flow = ai_model_predict_flow_gps(&runtime_model,
+                                                                 AI_MOTOR_MODE_FINE_ONLY,
+                                                                 dose_speed);
+                    if (dose_flow <= 0.005f) {
+                        dose_flow = fine_flow * (dose_speed / fmaxf(fine_speed, 0.001f));
+                    }
+                    if (!approach_zone &&
+                        runtime_stats.recovery_flow_count >= 4u &&
+                        runtime_stats.recovery_flow_median_gps > 0.001f) {
+                        dose_flow = dose_flow * 0.60f +
+                                    runtime_stats.recovery_flow_median_gps * 0.40f;
+                    }
+                    dose_flow = fmaxf(dose_flow, 0.012f);
+
+                    float dose_factor = approach_zone ? 0.72f : (middle_zone ? 0.68f : 0.60f);
+                    dose_factor *= 1.0f + fminf((float)recovery_no_progress_count * 0.20f, 0.60f);
+                    uint32_t dose_ms = (uint32_t)lroundf(
+                        (desired_add_gn / dose_flow) * 1000.0f * dose_factor);
+                    uint32_t min_dose_ms = approach_zone ? 180u : (middle_zone ? 140u : 100u);
+                    uint32_t max_dose_ms = approach_zone ? 1400u : (middle_zone ? 1100u : 750u);
+                    min_dose_ms += (uint32_t)recovery_no_progress_count * 60u;
+                    dose_ms = (uint32_t)fmaxf((float)min_dose_ms,
+                                              fminf((float)max_dose_ms, (float)dose_ms));
+
+                    charge_mode_set_live_phase(approach_zone ? "fine_recover" : "micro_heal",
+                                               remaining_weight,
+                                               target_margin);
+                    float pulse_start_weight = current_weight;
+                    command_recovery_fine_motor(dose_speed);
+                    if (!wait_with_abort(dose_ms)) {
+                        live_recovery_exit_reason = RECOVERY_EXIT_ABORT;
+                        return;
+                    }
+                    command_recovery_fine_motor(0);
+                    recovery_pulse_count++;
+                    live_recovery_pulse_count = recovery_pulse_count;
+
+                    float stop_weight = get_latest_measurement(120, pulse_start_weight);
+                    current_weight = wait_for_settled_measurement(700, stop_weight);
+                    mark_fine_stop(stop_weight, current_weight);
+                    if (charge_mode_is_valid_scale_measurement(current_weight)) {
+                        charge_mode_update_true_final_measurement(current_weight);
+                        live_recovery_end_weight_gn = current_weight;
+                    }
+                    if (charge_mode_config.charge_mode_state == CHARGE_MODE_EXIT) {
+                        return;
+                    }
+
+                    float delivered_gn = current_weight - pulse_start_weight;
+                    float minimum_progress_gn = fmaxf(0.004f, desired_add_gn * 0.15f);
+                    if (delivered_gn >= minimum_progress_gn) {
+                        recovery_no_progress_count = 0;
+                        recovery_last_progress_tick = xTaskGetTickCount();
+                    }
+                    else {
+                        recovery_no_progress_count++;
+                        live_recovery_stall_count++;
+                    }
+
+                    float settled_under_weight = target_weight - current_weight;
+                    if (current_weight - target_weight > target_tolerance) {
+                        live_recovery_exit_reason = RECOVERY_EXIT_OVER;
+                        break;
+                    }
+                    if (settled_under_weight <= target_tolerance) {
+                        live_recovery_exit_reason = RECOVERY_EXIT_TOLERANCE;
+                        break;
+                    }
+
+                    micro_heal_active = settled_under_weight <= micro_heal_entry_gn;
+                    uint32_t recovery_elapsed_ms =
+                        (uint32_t)((xTaskGetTickCount() - final_recovery_start_tick) *
+                                   portTICK_PERIOD_MS);
+                    if (recovery_pulse_count >= 8u || recovery_elapsed_ms >= 15000u) {
+                        live_recovery_exit_reason = RECOVERY_EXIT_TIMEOUT;
+                        break;
+                    }
+
+                    previous_weight = current_weight;
+                    older_weight = current_weight;
+                    previous_sample_tick = 0;
+                    previous_sample_period_s = 0.0f;
+                    continue;
                 }
                 else {
                     charge_mode_command_motor(SELECT_FINE_TRICKLER_MOTOR, curved_speed);
@@ -3731,6 +3682,7 @@ bool http_rest_charge_mode_state(struct fs_file *file, int num_params, char *par
     // s36 (float): Selected model fine speed in rps
     // s37 (float): Selected model fine flow in gn/s
     // s38 (float): Selected model fine tail in gn
+    // s39 (uint32_t): Recovery pulse count
 
     static char charge_mode_json_buffer[1800];
     char elapsed_time_buffer[16] = {0};
@@ -3842,7 +3794,7 @@ bool http_rest_charge_mode_state(struct fs_file *file, int num_params, char *par
              "\"s21\":%0.3f,\"s22\":%0.3f,\"s23\":%s,\"s24\":%s,\"s25\":%s,"
              "\"s26\":%s,\"s27\":%s,\"s28\":%s,\"s29\":%lu,\"s30\":%lu,\"s31\":%u,"
              "\"s32\":\"%s\",\"s33\":%0.3f,\"s34\":%0.3f,\"s35\":%0.3f,"
-             "\"s36\":%0.3f,\"s37\":%0.3f,\"s38\":%0.3f}",
+             "\"s36\":%0.3f,\"s37\":%0.3f,\"s38\":%0.3f,\"s39\":%lu}",
              http_json_header,
              charge_mode_config.target_charge_weight,
              weight_string,
@@ -3882,7 +3834,8 @@ bool http_rest_charge_mode_state(struct fs_file *file, int num_params, char *par
               live_model_bulk_tail_gn,
               live_model_fine_speed_rps,
               live_model_fine_flow_gps,
-              live_model_fine_tail_gn);
+              live_model_fine_tail_gn,
+              (unsigned long)live_recovery_pulse_count);
 
     // Clear events
     charge_mode_config.charge_mode_event = 0;

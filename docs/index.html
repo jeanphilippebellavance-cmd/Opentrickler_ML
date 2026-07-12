@@ -33,7 +33,7 @@
     <section class="hero section-band">
       <div class="section-inner hero-grid">
         <div class="hero-copy">
-          <p class="eyebrow">Current public beta: 2026.07.12-beta.10</p>
+          <p class="eyebrow">Current public beta: 2026.07.12-beta.11</p>
           <h1>Adaptive OpenTrickler firmware for profile-aware powder flow learning.</h1>
           <p class="lede">
             This branch adds flow characterization, machine calibration, automatic runtime safety,
@@ -92,8 +92,8 @@
           <h2>Different From Original OpenTrickler Firmware</h2>
           <p>
             This branch keeps the normal OpenTrickler charge flow, display workflow, scale support, and motor
-            control foundation, then adds an adaptive model that can be characterized, calibrated, saved, and
-            refined from production evidence per profile.
+            control foundation, then adds a profile model that can be characterized, calibrated, saved, and
+            guarded by recent production evidence without drifting the characterized machine parameters.
           </p>
         </div>
         <div class="feature-grid">
@@ -111,15 +111,15 @@
           </article>
           <article class="feature-card">
             <h3>Runtime learning</h3>
-            <p>Normal throws refine the model using final error, phase timing, stop weights, recovery time, and stalls.</p>
+            <p>Normal throws maintain a rolling phase-specific safety window without rewriting characterization.</p>
           </article>
           <article class="feature-card">
             <h3>Automatic safety governor</h3>
             <p>Recent phase results may widen guards immediately; only stable, accurate history may tighten them.</p>
           </article>
           <article class="feature-card">
-            <h3>Two-stage recovery</h3>
-            <p>Beta 10 adds a motor-off <code>tail_drain</code> before <code>fine_recover</code> and <code>micro_heal</code>.</p>
+            <h3>Measured recovery</h3>
+            <p>Beta 11 calculates bounded approach and micro doses from observed effective recovery flow.</p>
           </article>
           <article class="feature-card">
             <h3>REST and OTA</h3>
@@ -429,18 +429,18 @@
     <section id="runtime-learning" class="section-band alt">
       <div class="section-inner two-column">
         <div>
-          <p class="eyebrow">Production refinement</p>
+          <p class="eyebrow">Production evidence</p>
           <h2>Automatic Runtime Learning</h2>
           <p>
-            Runtime learning happens during normal throws. Beta 10 evaluates coarse handoff, complete fast-finish
-            tail, and recovery outcomes separately, then changes stop guards without changing the characterized
-            production motor speeds.
+            Runtime learning happens during normal throws. Beta 11 evaluates complete coarse settling, fast-finish
+            tail, and recovery outcomes separately, then changes temporary guards without rewriting the characterized
+            speeds, flows, or machine-calibration fields.
           </p>
           <ul class="check-list">
             <li>Unstable or overthrow-prone history can only make a phase safer.</li>
             <li>Stable, accurate history is required before a phase can tighten.</li>
             <li>Near-target recovery waits for passive powder arrival before running the motor.</li>
-            <li>Risky recovery changes to bounded micro pulses.</li>
+            <li>Recovery doses use measured effective flow and escalate after verified no progress.</li>
             <li>Re-characterize if the setup no longer behaves like the saved model.</li>
           </ul>
         </div>
@@ -455,8 +455,8 @@
             <tbody>
               <tr><td>Stable and accurate</td><td>Percentile guards may tighten within fixed safety bounds.</td></tr>
               <tr><td>Fast-finish overthrows</td><td>Use the complete-tail P90 floor and block tightening.</td></tr>
-              <tr><td>Recovery overthrows</td><td>Wait for tail drain, use base recovery speed, and pulse near target.</td></tr>
-              <tr><td>Late coarse landing</td><td>Suppress closer handoff bias while retaining the selected bulk speed.</td></tr>
+              <tr><td>Recovery overthrows</td><td>Wait for tail drain and calculate bounded doses from measured recovery flow.</td></tr>
+              <tr><td>Late coarse landing</td><td>Keep powered coarse top-up disabled and observe the complete passive tail.</td></tr>
             </tbody>
           </table>
         </div>
@@ -573,39 +573,39 @@ cmake -B build-pico2w-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DPICO_BOARD=p
       <div class="section-inner">
         <div class="section-heading">
           <p class="eyebrow">Release status</p>
-          <h2>2026.07.12-beta.10</h2>
+          <h2>2026.07.12-beta.11</h2>
           <p>
-            Beta 10 keeps beta9's fast production speeds while removing manual model overrides and making recent
-            phase outcomes the sole authority for automatic stop and recovery guards.
+            Beta 11 responds to the first beta10 powder session by removing powered coarse top-up, separating
+            runtime guards from characterization, and replacing repeated recovery stalls with measured doses.
           </p>
         </div>
         <div class="release-grid">
           <article>
             <h3>Changes</h3>
             <ul>
-              <li>Removed manual Faster, Safer, Fine Finish Faster, Bulk Closer, and Undo controls.</li>
-              <li>Added complete fast-finish tail P90/P95 statistics and phase-specific overthrow rates.</li>
-              <li>Made unstable evidence safety-only: it may widen a guard but cannot tighten one.</li>
-              <li>Added a calibrated motor-off <code>tail_drain</code> before active recovery.</li>
-              <li>Added bounded pulse recovery when recent recovery outcomes are unsafe.</li>
+              <li>Removed powered coarse top-up from production throws.</li>
+              <li>Added a complete motor-off <code>coarse_settle</code> observation before fine control.</li>
+              <li>Stopped production throws from rewriting characterization and calibration fields.</li>
+              <li>Added measured recovery-flow P25 and median statistics.</li>
+              <li>Replaced repeated micro-heal stalls with three-zone bounded recovery doses.</li>
             </ul>
           </article>
           <article>
             <h3>Expected behavior</h3>
             <ul>
               <li>Characterized coarse and fine speeds remain unchanged.</li>
-              <li>Risky fast finishes stop earlier using complete powder-arrival tails.</li>
-              <li>Passive tail is observed before recovery motor delivery begins.</li>
-              <li>Accurate stable windows can recover speed automatically.</li>
+              <li>Residual bulk powder drains before the controller decides how much fine work remains.</li>
+              <li>Runtime percentiles change temporary guards, not the saved physical model.</li>
+              <li>No-progress recovery pulses escalate within strict pulse and time limits.</li>
             </ul>
           </article>
           <article>
             <h3>Test status</h3>
             <ul>
               <li>Pico 2 W release build passes locally.</li>
-              <li>The retained RL17 window activates all expected beta10 guards in DataLab replay.</li>
-              <li>Clean, unsafe, recovery-risk, and sparse synthetic windows pass.</li>
-              <li>Physical powder verification remains required after OTA deployment.</li>
+              <li>The 29-throw beta10 RL17 session identifies coarse top-up as the dominant fast-overthrow source.</li>
+              <li>The latest runtime window provides 16 usable recovery-flow measurements.</li>
+              <li>Static, replay, collector, and OTA checks precede supervised powder verification.</li>
             </ul>
           </article>
         </div>

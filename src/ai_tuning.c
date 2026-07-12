@@ -90,9 +90,6 @@ static void ai_tuning_update_machine_calibration_unlocked(const ai_drop_telemetr
 static void ai_tuning_sanitize_machine_calibration(ai_profile_model_t* model, float target_weight);
 static float ai_tuning_machine_coarse_tail_guard(const ai_machine_calibration_t* cal,
                                                  float target_weight);
-static float ai_tuning_machine_bulk_handoff_margin(const ai_profile_model_t* model,
-                                                   float target_weight,
-                                                   float desired_fine_window);
 static void ai_tuning_sanitize_model_unlocked(ai_profile_model_t* model,
                                               float target_weight,
                                               bool preserve_enabled);
@@ -200,40 +197,6 @@ static float ai_tuning_machine_coarse_tail_guard(const ai_machine_calibration_t*
     float guard = fmaxf(p95_tail, avg_tail + uncertainty * 0.65f);
     const float cap = fmaxf(20.0f, target_weight * 0.55f);
     return ai_clampf(guard, 0.0f, cap);
-}
-
-static float ai_tuning_machine_bulk_handoff_margin(const ai_profile_model_t* model,
-                                                   float target_weight,
-                                                   float desired_fine_window) {
-    if (model == NULL || !model->machine.valid) {
-        return 0.0f;
-    }
-
-    const ai_machine_calibration_t* cal = &model->machine;
-    const float tail_guard = ai_tuning_machine_coarse_tail_guard(cal, target_weight);
-    if (tail_guard <= 0.0f) {
-        return 0.0f;
-    }
-
-    const float uncertainty = isfinite(cal->coarse_uncertainty_gn)
-        ? fmaxf(cal->coarse_uncertainty_gn, 0.0f)
-        : 0.0f;
-
-    // Stop-to-settle tail already contains scale latency and powder in flight.
-    // Add only a bounded repeatability allowance so latency is not counted twice.
-    const float uncertainty_margin =
-        ai_clampf(uncertainty * 0.55f,
-                  0.10f,
-                  fmaxf(0.65f, target_weight * 0.018f));
-    const float margin = desired_fine_window +
-                         tail_guard +
-                         uncertainty_margin;
-
-    const float max_margin =
-        desired_fine_window + fmaxf(18.0f, target_weight * 0.55f);
-    return ai_clampf(margin,
-                     desired_fine_window + fmaxf(0.75f, target_weight * 0.020f),
-                     max_margin);
 }
 
 const char* ai_tuning_fine_tube_profile_to_string(ai_fine_tube_profile_t profile) {
@@ -955,6 +918,29 @@ bool ai_tuning_get_runtime_profile_stats(uint8_t profile_idx,
         out->median_recovery_motor_ms = ai_tuning_percentile(values, value_count, 0.50f);
     }
 
+    value_count = 0;
+    for (uint8_t idx = 0; idx < g_history.observation_count; idx++) {
+        const ai_runtime_observation_t* obs = &g_history.observations[idx];
+        if (obs->profile_idx != profile_idx ||
+            !isfinite(obs->recovery_start_weight_gn) ||
+            !isfinite(obs->recovery_end_weight_gn) ||
+            !isfinite(obs->recovery_motor_on_ms) ||
+            obs->recovery_motor_on_ms <= 50.0f) {
+            continue;
+        }
+
+        float delivered = obs->recovery_end_weight_gn - obs->recovery_start_weight_gn;
+        float flow_gps = delivered / (obs->recovery_motor_on_ms / 1000.0f);
+        if (delivered > 0.003f && flow_gps > 0.001f && flow_gps < 0.40f) {
+            values[value_count++] = flow_gps;
+        }
+    }
+    out->recovery_flow_count = value_count;
+    if (value_count > 0u) {
+        out->recovery_flow_p25_gps = ai_tuning_percentile(values, value_count, 0.25f);
+        out->recovery_flow_median_gps = ai_tuning_percentile(values, value_count, 0.50f);
+    }
+
     out->valid = out->observation_count >= 3u;
     ai_tuning_unlock();
     return out->valid;
@@ -993,10 +979,6 @@ void ai_tuning_record_charge(uint8_t profile_idx, float target_weight,
 
     load_history_from_flash();
 
-    const float controller_failure_band = fmaxf(3.0f, target_weight * 0.08f);
-    bool controller_failure = fabsf(final_error_gn) > controller_failure_band;
-    bool history_changed = false;
-
     ai_runtime_observation_t obs = {
         .target_weight = target_weight,
         .final_error_gn = final_error_gn,
@@ -1022,439 +1004,15 @@ void ai_tuning_record_charge(uint8_t profile_idx, float target_weight,
     if (g_history.observation_count < AI_RUNTIME_OBSERVATION_COUNT) {
         g_history.observation_count++;
     }
-    history_changed = true;
-
-    ai_profile_model_t* model = &g_history.models[profile_idx];
-    if (model->valid && model->enabled) {
-        float positive_bias_limit = fmaxf(0.18f, fminf(0.30f, target_weight * 0.006f));
-        float negative_bias_limit = 0.08f;
-        const float acceptable_band = 0.0205f;
-        float min_fine_window = ai_tuning_min_fine_window_for_model(model);
-        float max_fine_window = fmaxf(1.20f, fminf(1.80f, target_weight * 0.05f));
-        const float good_time_ms = 9500.0f;
-        const float slow_time_ms = 15000.0f;
-        const float very_slow_time_ms = 22000.0f;
-        bool have_coarse_feedback =
-            isfinite(coarse_stop_weight_gn) &&
-            isfinite(after_coarse_settle_gn) &&
-            isfinite(observed_coarse_tail_gn) &&
-            coarse_stop_weight_gn > fmaxf(0.20f, target_weight * 0.03f) &&
-            after_coarse_settle_gn >= -0.25f &&
-            after_coarse_settle_gn >= coarse_stop_weight_gn - 0.10f &&
-            observed_coarse_tail_gn >= 0.0f &&
-            observed_coarse_tail_gn <= fmaxf(25.0f, target_weight * 0.75f);
-        const float final_weight_gn = target_weight + final_error_gn;
-        const bool recovery_motor_was_used =
-            isfinite(recovery_motor_on_ms) && recovery_motor_on_ms > 50.0f;
-        float production_fine_tail = observed_fine_tail_gn;
-        if (!recovery_motor_was_used &&
-            isfinite(fine_stop_weight_gn) &&
-            isfinite(final_weight_gn) &&
-            fine_stop_weight_gn > target_weight * 0.55f &&
-            fine_stop_weight_gn < target_weight + 1.0f) {
-            production_fine_tail = fmaxf(production_fine_tail,
-                                         final_weight_gn - fine_stop_weight_gn);
-        }
-        if (isfinite(fine_stop_weight_gn) &&
-            isfinite(after_fine_settle_gn) &&
-            fine_stop_weight_gn > target_weight * 0.55f &&
-            after_fine_settle_gn < target_weight + 1.0f) {
-            production_fine_tail = fmaxf(production_fine_tail,
-                                         after_fine_settle_gn - fine_stop_weight_gn);
-        }
-        const float fine_tail_cap = fmaxf(0.75f, fminf(2.00f, target_weight * 0.05f));
-        bool have_fine_feedback =
-            isfinite(fine_stop_weight_gn) &&
-            isfinite(production_fine_tail) &&
-            fine_stop_weight_gn > target_weight * 0.55f &&
-            fine_stop_weight_gn < target_weight + 1.0f &&
-            production_fine_tail >= 0.0f &&
-            production_fine_tail <= fine_tail_cap;
-        const float pre_recovery_fine_error =
-            isfinite(after_fine_settle_gn) ? after_fine_settle_gn - target_weight : 0.0f;
-        const bool fast_fine_landed_under =
-            have_fine_feedback &&
-            isfinite(after_fine_settle_gn) &&
-            pre_recovery_fine_error < -acceptable_band;
-        bool have_recovery_feedback =
-            isfinite(recovery_start_weight_gn) &&
-            isfinite(recovery_end_weight_gn) &&
-            isfinite(recovery_motor_on_ms) &&
-            recovery_start_weight_gn > target_weight * 0.55f &&
-            recovery_end_weight_gn > target_weight * 0.55f &&
-            recovery_motor_on_ms >= 0.0f;
-        bool recovery_bottleneck =
-            have_recovery_feedback &&
-            (recovery_stall_count > 0 ||
-             recovery_motor_on_ms > 5000.0f ||
-             (final_error_gn < -acceptable_band && final_error_gn > -0.14f));
-        float worst_final_error_gn = final_error_gn;
-        if (isfinite(post_finish_peak_weight_gn) &&
-            post_finish_peak_weight_gn > target_weight * 0.50f &&
-            post_finish_peak_weight_gn < target_weight + fmaxf(15.0f, target_weight)) {
-            worst_final_error_gn = fmaxf(worst_final_error_gn,
-                                         post_finish_peak_weight_gn - target_weight);
-        }
-        const float desired_runtime_fine_window =
-            fmaxf(0.85f, fminf(1.10f, target_weight * 0.025f));
-        const bool coarse_phase_blame =
-            have_coarse_feedback &&
-            after_coarse_settle_gn >
-                target_weight - desired_runtime_fine_window + acceptable_band;
-        const bool recovery_phase_blame =
-            have_recovery_feedback &&
-            recovery_motor_was_used;
-
-        const float runtime_disable_overcharge_band =
-            fmaxf(0.28f, target_weight * 0.0075f);
-        if (worst_final_error_gn > runtime_disable_overcharge_band) {
-            // A serious overcharge is a lost charge. Keep valid telemetry, but fail the
-            // next plan closed by immediately raising phase-specific safety margins.
-            const float severe_overcharge =
-                fminf(worst_final_error_gn, fmaxf(12.0f, target_weight * 0.45f));
-            model->runtime_bias_gn = positive_bias_limit;
-            model->recommended_fine_window_gn = max_fine_window;
-            if (have_coarse_feedback && coarse_phase_blame) {
-                const float tail_cap = fmaxf(20.0f, target_weight * 0.55f);
-                const float observed_tail = ai_clampf(observed_coarse_tail_gn,
-                                                      0.0f,
-                                                      tail_cap);
-                model->coarse_tail_gn = fmaxf(model->coarse_tail_gn,
-                                              observed_tail * 0.92f);
-                model->coarse_trim_tail_gn = fmaxf(model->coarse_trim_tail_gn,
-                                                   observed_tail * 0.72f);
-                if (model->machine.valid) {
-                    model->machine.coarse_tail_avg_gn =
-                        fmaxf(model->machine.coarse_tail_avg_gn,
-                              observed_tail * 0.78f);
-                    model->machine.coarse_tail_p95_gn =
-                        fmaxf(model->machine.coarse_tail_p95_gn, observed_tail);
-                    model->machine.coarse_uncertainty_gn =
-                        fmaxf(model->machine.coarse_uncertainty_gn,
-                              fminf(5.0f, severe_overcharge * 0.45f));
-                }
-            }
-            if (model->machine.valid) {
-                const float desired_fine_window =
-                    fmaxf(0.85f, fminf(1.10f, target_weight * 0.025f));
-                const float measured_margin =
-                    ai_tuning_machine_bulk_handoff_margin(model,
-                                                          target_weight,
-                                                          desired_fine_window);
-                const float emergency_margin =
-                    desired_fine_window +
-                    fmaxf(0.0f, observed_coarse_tail_gn) +
-                    fminf(fmaxf(2.0f, severe_overcharge * 0.80f),
-                          fmaxf(8.0f, target_weight * 0.22f));
-                model->machine.recommended_bulk_handoff_gn =
-                    fmaxf(model->machine.recommended_bulk_handoff_gn,
-                          fmaxf(measured_margin, emergency_margin));
-                model->machine.recommended_trim_stop_gn =
-                    fmaxf(model->machine.recommended_trim_stop_gn,
-                          fmaxf(2.5f, target_weight * 0.08f));
-            }
-            ai_tuning_sanitize_model_unlocked(model, target_weight, true);
-            history_changed = true;
-            if (history_changed) {
-                save_history_to_flash();
-            }
-            ai_tuning_unlock();
-            return;
-        }
-
-        if (fabsf(final_error_gn) > controller_failure_band) {
-            // Skip runtime adaptation on obviously broken throws so a controller regression
-            // does not teach the saved model the wrong behaviour.
-        }
-        else if (final_error_gn > acceptable_band) {
-            float overcharge = fminf(final_error_gn, 0.60f);
-            if (!recovery_phase_blame &&
-                !have_fine_feedback &&
-                coarse_phase_blame &&
-                     after_coarse_settle_gn > target_weight + acceptable_band) {
-                model->runtime_bias_gn += fmaxf(0.015f, overcharge * 0.16f);
-                if (model->machine.valid) {
-                    model->machine.recommended_bulk_handoff_gn +=
-                        fmaxf(0.04f, overcharge * 0.35f);
-                    model->machine.recommended_trim_stop_gn +=
-                        fmaxf(0.02f, overcharge * 0.14f);
-                }
-            }
-        }
-        else if (final_error_gn < -acceptable_band) {
-            float undercharge = fminf(-final_error_gn, 0.60f);
-            model->runtime_bias_gn *= 0.94f;
-            if (!recovery_bottleneck && undercharge > 0.18f && total_time_ms > slow_time_ms) {
-                model->recommended_fine_window_gn -= fminf(0.018f, undercharge * 0.025f);
-            }
-        }
-        else if (total_time_ms > 0.0f && fabsf(final_error_gn) <= acceptable_band) {
-            if (fabsf(final_error_gn) <= acceptable_band * 0.50f) {
-                model->runtime_bias_gn *= (total_time_ms > slow_time_ms) ? 0.90f : 0.95f;
-            }
-            else if (final_error_gn <= 0.0f) {
-                model->runtime_bias_gn *= 0.93f;
-            }
-            if (recovery_bottleneck) {
-                // Slow near-target recovery is a micro-flow problem, not a coarse/fine handoff problem.
-            }
-            else if (total_time_ms > very_slow_time_ms) {
-                model->recommended_fine_window_gn -= 0.09f;
-            }
-            else if (total_time_ms > slow_time_ms) {
-                model->recommended_fine_window_gn -= 0.06f;
-            }
-            else if (total_time_ms > good_time_ms) {
-                model->recommended_fine_window_gn -= 0.025f;
-            }
-        }
-
-        model->runtime_bias_gn = ai_clampf(model->runtime_bias_gn,
-                                           -negative_bias_limit,
-                                           positive_bias_limit);
-        model->recommended_fine_window_gn = ai_clampf(
-            model->recommended_fine_window_gn,
-            min_fine_window,
-            max_fine_window);
-
-        if (have_coarse_feedback) {
-            // Production throws expose the real coarse settling tail better than short samples.
-            const float desired_fine_window =
-                fmaxf(0.85f, fminf(1.10f, target_weight * 0.025f));
-            const float desired_after_coarse = target_weight - desired_fine_window;
-            const float handoff_error = after_coarse_settle_gn - desired_after_coarse;
-            const float tail_cap = fmaxf(20.0f, target_weight * 0.55f);
-            const float observed_tail = ai_clampf(observed_coarse_tail_gn, 0.0f, tail_cap);
-            float coarse_tail_alpha = observed_tail > model->coarse_tail_gn ? 0.24f : 0.08f;
-            if (model->coarse_tail_gn > observed_tail * 2.0f + 0.50f) {
-                coarse_tail_alpha = 0.18f;
-            }
-            model->coarse_tail_gn =
-                model->coarse_tail_gn * (1.0f - coarse_tail_alpha) +
-                observed_tail * coarse_tail_alpha;
-            float trim_tail_alpha = observed_tail > model->coarse_trim_tail_gn ? 0.20f : 0.10f;
-            model->coarse_trim_tail_gn =
-                model->coarse_trim_tail_gn * (1.0f - trim_tail_alpha) +
-                observed_tail * trim_tail_alpha;
-
-            if (handoff_error > 0.12f) {
-                model->runtime_bias_gn += fminf(0.05f,
-                                                fmaxf(0.006f, handoff_error * 0.025f));
-            }
-            else if (handoff_error < -0.12f) {
-                float early_by = fminf(-handoff_error, 6.0f);
-                model->runtime_bias_gn -= fminf(0.05f,
-                                                fmaxf(0.004f, early_by * 0.018f));
-            }
-
-            if (model->machine.valid) {
-                float min_bulk_margin =
-                    desired_fine_window + fmaxf(0.75f, target_weight * 0.020f);
-                float max_bulk_margin = desired_fine_window + fmaxf(18.0f, target_weight * 0.55f);
-                float min_trim_margin = desired_fine_window + 0.70f;
-                float max_trim_margin = desired_fine_window + fmaxf(1.80f, target_weight * 0.055f);
-                if (handoff_error > acceptable_band) {
-                    float bump = fminf(fmaxf(1.00f, target_weight * 0.030f),
-                                       fmaxf(0.03f, handoff_error * 0.35f));
-                    model->machine.recommended_bulk_handoff_gn += bump;
-                    model->machine.recommended_trim_stop_gn += bump * 0.45f;
-                }
-                else if (handoff_error < -acceptable_band) {
-                    float relief = fminf(0.65f, fmaxf(0.03f, (-handoff_error) * 0.16f));
-                    model->machine.recommended_bulk_handoff_gn -= relief;
-                    model->machine.recommended_trim_stop_gn -= relief * 0.35f;
-                }
-                float measured_margin =
-                    ai_tuning_machine_bulk_handoff_margin(model,
-                                                          target_weight,
-                                                          desired_fine_window);
-                if (measured_margin > 0.0f &&
-                    handoff_error > acceptable_band) {
-                    model->machine.recommended_bulk_handoff_gn =
-                        fmaxf(model->machine.recommended_bulk_handoff_gn,
-                              measured_margin);
-                }
-                model->machine.recommended_bulk_handoff_gn =
-                    ai_clampf(model->machine.recommended_bulk_handoff_gn,
-                              min_bulk_margin,
-                              max_bulk_margin);
-                model->machine.recommended_trim_stop_gn =
-                    ai_clampf(model->machine.recommended_trim_stop_gn,
-                              min_trim_margin,
-                              max_trim_margin);
-            }
-
-            model->coarse_tail_gn = ai_clampf(model->coarse_tail_gn, 0.0f, tail_cap);
-            model->coarse_trim_tail_gn =
-                ai_clampf(model->coarse_trim_tail_gn, 0.0f, tail_cap);
-            model->runtime_bias_gn = ai_clampf(model->runtime_bias_gn,
-                                               -negative_bias_limit,
-                                               positive_bias_limit);
-        }
-        if (have_fine_feedback) {
-            const float observed_tail = ai_clampf(production_fine_tail, 0.0f, fine_tail_cap);
-            float alpha = 0.10f;
-            if (final_error_gn > acceptable_band && !recovery_phase_blame) {
-                alpha = 0.38f;
-            }
-            else if (observed_tail > model->fine_tail_gn + 0.05f) {
-                alpha = 0.22f;
-            }
-
-            if (observed_tail > model->fine_tail_gn ||
-                (final_error_gn > acceptable_band && !recovery_phase_blame)) {
-                model->fine_tail_gn =
-                    model->fine_tail_gn * (1.0f - alpha) + observed_tail * alpha;
-            }
-            else if ((fast_fine_landed_under ||
-                      (final_error_gn <= 0.0f && total_time_ms > slow_time_ms)) &&
-                     observed_tail + 0.05f < model->fine_tail_gn) {
-                float lower_alpha = fast_fine_landed_under ? 0.14f : 0.06f;
-                model->fine_tail_gn =
-                    model->fine_tail_gn * (1.0f - lower_alpha) + observed_tail * lower_alpha;
-            }
-
-            if (final_error_gn > acceptable_band && !recovery_phase_blame) {
-                float overcharge = fminf(final_error_gn, 0.60f);
-                float fast_tail_alpha = observed_tail > model->fine_fast_tail_gn ? 0.42f : 0.16f;
-                model->fine_fast_tail_gn =
-                    model->fine_fast_tail_gn * (1.0f - fast_tail_alpha) +
-                    observed_tail * fast_tail_alpha;
-                model->fine_stop_safety_bias_gn += fmaxf(0.003f, overcharge * 0.025f);
-            }
-            else if (observed_tail + 0.03f < model->fine_fast_tail_gn) {
-                float lower_alpha = fast_fine_landed_under ? 0.18f : 0.06f;
-                model->fine_fast_tail_gn =
-                    model->fine_fast_tail_gn * (1.0f - lower_alpha) +
-                    observed_tail * lower_alpha;
-            }
-
-            if (fast_fine_landed_under) {
-                float under_gap = fminf(-pre_recovery_fine_error, 0.60f);
-                model->fine_stop_safety_bias_gn -=
-                    fminf(0.025f, fmaxf(0.004f, under_gap * 0.08f));
-            }
-
-            model->fine_tail_gn = ai_clampf(model->fine_tail_gn, 0.0f, fine_tail_cap);
-            model->fine_fast_tail_gn = ai_clampf(model->fine_fast_tail_gn, 0.0f, fine_tail_cap);
-            model->runtime_bias_gn = ai_clampf(model->runtime_bias_gn,
-                                               -negative_bias_limit,
-                                               positive_bias_limit);
-            min_fine_window = ai_tuning_min_fine_window_for_model(model);
-            model->recommended_fine_window_gn = ai_clampf(
-                model->recommended_fine_window_gn,
-                min_fine_window,
-                max_fine_window);
-        }
-        if (have_recovery_feedback) {
-            float min_recovery_speed = 0.08f;
-            float max_recovery_speed = model->fine_best_speed_rps > 0.0f
-                ? fminf(0.60f, fmaxf(0.35f, model->fine_best_speed_rps * 0.12f))
-                : 0.60f;
-            if (!isfinite(model->fine_recovery_speed_rps) ||
-                model->fine_recovery_speed_rps <= 0.0f) {
-                model->fine_recovery_speed_rps = 0.20f;
-            }
-
-            bool learned_micro_tail_small =
-                model->fine_micro_tail_gn <= 0.035f ||
-                model->fine_recovery_tail_gn <= 0.035f;
-            if (final_error_gn > acceptable_band) {
-                model->fine_recovery_speed_rps *= 0.88f;
-                model->fine_recovery_tail_gn =
-                    fmaxf(model->fine_recovery_tail_gn, fminf(fine_tail_cap, final_error_gn));
-            }
-            else if (final_error_gn < -acceptable_band &&
-                     final_error_gn > -0.22f &&
-                     (recovery_motor_on_ms > 2500.0f ||
-                      recovery_stall_count > 0 ||
-                      recovery_exit_reason == 3 ||
-                      (recovery_motor_was_used && recovery_motor_on_ms < 900.0f))) {
-                model->fine_recovery_speed_rps *= learned_micro_tail_small ? 1.28f : 1.18f;
-            }
-            else if (fabsf(final_error_gn) <= acceptable_band &&
-                     (recovery_stall_count >= 2 || recovery_motor_on_ms > 4500.0f)) {
-                model->fine_recovery_speed_rps *= learned_micro_tail_small
-                    ? (recovery_stall_count >= 3 ? 1.22f : 1.14f)
-                    : (recovery_stall_count >= 3 ? 1.12f : 1.08f);
-            }
-            else if (fabsf(final_error_gn) <= acceptable_band &&
-                     recovery_motor_on_ms > 7000.0f) {
-                model->fine_recovery_speed_rps *= learned_micro_tail_small ? 1.16f : 1.08f;
-            }
-
-            model->fine_recovery_speed_rps = ai_clampf(model->fine_recovery_speed_rps,
-                                                       min_recovery_speed,
-                                                       max_recovery_speed);
-            float observed_recovery_drop =
-                fmaxf(0.0f, recovery_end_weight_gn - recovery_start_weight_gn);
-            float observed_recovery_flow = (recovery_motor_on_ms > 50.0f)
-                ? observed_recovery_drop / (recovery_motor_on_ms / 1000.0f)
-                : 0.0f;
-            float predicted_recovery_flow =
-                ai_tuning_predict_flow_from_model(model,
-                                                  AI_MOTOR_MODE_FINE_ONLY,
-                                                  model->fine_recovery_speed_rps);
-            if (observed_recovery_flow > 0.001f && observed_recovery_flow < 0.20f) {
-                float alpha = recovery_motor_on_ms > 1500.0f ? 0.28f : 0.14f;
-                float seed_flow = isfinite(model->fine_recovery_flow_gps) &&
-                                  model->fine_recovery_flow_gps > 0.0f
-                    ? model->fine_recovery_flow_gps
-                    : fmaxf(predicted_recovery_flow, observed_recovery_flow);
-                model->fine_recovery_flow_gps =
-                    seed_flow * (1.0f - alpha) + observed_recovery_flow * alpha;
-                model->fine_micro_flow_gps =
-                    (isfinite(model->fine_micro_flow_gps) && model->fine_micro_flow_gps > 0.0f)
-                        ? model->fine_micro_flow_gps * (1.0f - alpha) + observed_recovery_flow * alpha
-                        : observed_recovery_flow;
-            }
-            else {
-                model->fine_recovery_flow_gps = predicted_recovery_flow;
-            }
-            if (!isfinite(model->fine_recovery_tail_gn)) {
-                model->fine_recovery_tail_gn = 0.0f;
-            }
-            float observed_micro_tail = 0.0f;
-            if (isfinite(post_finish_peak_weight_gn) &&
-                isfinite(recovery_end_weight_gn) &&
-                post_finish_peak_weight_gn > recovery_end_weight_gn &&
-                post_finish_peak_weight_gn < target_weight + 1.0f) {
-                observed_micro_tail = post_finish_peak_weight_gn - recovery_end_weight_gn;
-            }
-            if (final_error_gn > acceptable_band) {
-                observed_micro_tail = fmaxf(observed_micro_tail, fminf(final_error_gn, 0.18f));
-            }
-            if (observed_micro_tail > 0.0f) {
-                float micro_tail_alpha =
-                    observed_micro_tail > model->fine_micro_tail_gn ? 0.32f : 0.12f;
-                model->fine_micro_tail_gn =
-                    model->fine_micro_tail_gn * (1.0f - micro_tail_alpha) +
-                    observed_micro_tail * micro_tail_alpha;
-                model->fine_recovery_tail_gn =
-                    model->fine_recovery_tail_gn * (1.0f - micro_tail_alpha) +
-                    observed_micro_tail * micro_tail_alpha;
-            }
-            else if (final_error_gn <= 0.0f &&
-                     recovery_motor_on_ms > 2500.0f &&
-                     model->fine_micro_tail_gn > 0.0f) {
-                model->fine_micro_tail_gn *= 0.98f;
-                model->fine_recovery_tail_gn *= 0.98f;
-            }
-            model->fine_recovery_tail_gn = ai_clampf(model->fine_recovery_tail_gn,
-                                                     0.0f,
-                                                     fminf(0.18f, fine_tail_cap));
-            model->fine_micro_tail_gn = ai_clampf(model->fine_micro_tail_gn,
-                                                  0.0f,
-                                                  fminf(0.18f, fine_tail_cap));
-        }
-        ai_tuning_update_finish_profile_unlocked(model, target_weight);
-        history_changed = history_changed || !controller_failure;
+    // Characterization describes the machine. Production throws belong in the
+    // rolling observation window and must not rewrite characterization fields.
+    ai_profile_model_t* stable_model = &g_history.models[profile_idx];
+    if (stable_model->valid && stable_model->enabled) {
+        ai_tuning_sanitize_model_unlocked(stable_model, target_weight, true);
     }
-
-    if (history_changed) {
-        save_history_to_flash();
-    }
+    save_history_to_flash();
     ai_tuning_unlock();
+    return;
 }
 
 void ai_tuning_calculate_refinements(uint8_t profile_idx) {
@@ -2291,25 +1849,8 @@ static void ai_tuning_sanitize_machine_calibration(ai_profile_model_t* model, fl
                                         0.70f,
                                         fmaxf(1.80f, target_weight * 0.055f));
 
-    if (!isfinite(cal->recommended_bulk_handoff_gn) ||
-        cal->recommended_bulk_handoff_gn <= 0.0f) {
-        cal->recommended_bulk_handoff_gn = default_bulk_margin;
-    }
-    else if (g_session.state == AI_TUNING_CALIBRATING_COARSE ||
-             g_session.state == AI_TUNING_CALIBRATING_FINE) {
-        cal->recommended_bulk_handoff_gn =
-            cal->recommended_bulk_handoff_gn * 0.45f + default_bulk_margin * 0.55f;
-    }
-
-    if (!isfinite(cal->recommended_trim_stop_gn) ||
-        cal->recommended_trim_stop_gn <= 0.0f) {
-        cal->recommended_trim_stop_gn = default_trim_margin;
-    }
-    else if (g_session.state == AI_TUNING_CALIBRATING_COARSE ||
-             g_session.state == AI_TUNING_CALIBRATING_FINE) {
-        cal->recommended_trim_stop_gn =
-            cal->recommended_trim_stop_gn * 0.45f + default_trim_margin * 0.55f;
-    }
+    cal->recommended_bulk_handoff_gn = default_bulk_margin;
+    cal->recommended_trim_stop_gn = default_trim_margin;
 
     cal->recommended_bulk_handoff_gn =
         ai_clampf(cal->recommended_bulk_handoff_gn,
@@ -2346,33 +1887,10 @@ static void ai_tuning_update_finish_profile_unlocked(ai_profile_model_t* model, 
     float micro_flow = isfinite(model->fine_recovery_flow_gps) ? model->fine_recovery_flow_gps : 0.0f;
     float micro_tail = isfinite(model->fine_recovery_tail_gn) ? model->fine_recovery_tail_gn : 0.0f;
 
-    if (!isfinite(model->fine_fast_flow_gps) || model->fine_fast_flow_gps <= 0.0f) {
-        model->fine_fast_flow_gps = best_fine_flow;
-    }
-    else if (best_fine_flow > 0.005f) {
-        model->fine_fast_flow_gps = model->fine_fast_flow_gps * 0.85f + best_fine_flow * 0.15f;
-    }
-
-    if (!isfinite(model->fine_fast_tail_gn) || model->fine_fast_tail_gn <= 0.0f) {
-        model->fine_fast_tail_gn = best_fine_tail;
-    }
-    else if (best_fine_tail > model->fine_fast_tail_gn) {
-        model->fine_fast_tail_gn = model->fine_fast_tail_gn * 0.75f + best_fine_tail * 0.25f;
-    }
-
-    if (!isfinite(model->fine_micro_flow_gps) || model->fine_micro_flow_gps <= 0.0f) {
-        model->fine_micro_flow_gps = micro_flow;
-    }
-    else if (micro_flow > 0.001f) {
-        model->fine_micro_flow_gps = model->fine_micro_flow_gps * 0.80f + micro_flow * 0.20f;
-    }
-
-    if (!isfinite(model->fine_micro_tail_gn) || model->fine_micro_tail_gn <= 0.0f) {
-        model->fine_micro_tail_gn = micro_tail;
-    }
-    else if (micro_tail > model->fine_micro_tail_gn) {
-        model->fine_micro_tail_gn = model->fine_micro_tail_gn * 0.72f + micro_tail * 0.28f;
-    }
+    model->fine_fast_flow_gps = best_fine_flow;
+    model->fine_fast_tail_gn = best_fine_tail;
+    model->fine_micro_flow_gps = micro_flow;
+    model->fine_micro_tail_gn = micro_tail;
 
     model->fine_fast_flow_gps = ai_clampf(model->fine_fast_flow_gps, 0.0f, 8.0f);
     model->fine_fast_tail_gn = ai_clampf(model->fine_fast_tail_gn, 0.0f, fine_tail_cap);
@@ -2440,24 +1958,7 @@ static void ai_tuning_update_finish_profile_unlocked(ai_profile_model_t* model, 
     else if (model->fine_tube_profile == AI_FINE_TUBE_PROFILE_LOW_FLOW_LOW_TAIL) {
         learned_safety_bias = ai_clampf(learned_safety_bias - 0.010f, 0.004f, 0.080f);
     }
-    if (!isfinite(model->fine_stop_safety_bias_gn) ||
-        model->fine_stop_safety_bias_gn <= 0.0f) {
-        model->fine_stop_safety_bias_gn = learned_safety_bias;
-    }
-    else if (learned_safety_bias > model->fine_stop_safety_bias_gn) {
-        model->fine_stop_safety_bias_gn =
-            model->fine_stop_safety_bias_gn * 0.85f + learned_safety_bias * 0.15f;
-    }
-    else if (model->fine_stop_safety_bias_gn > learned_safety_bias + 0.015f) {
-        model->fine_stop_safety_bias_gn =
-            model->fine_stop_safety_bias_gn * 0.75f + learned_safety_bias * 0.25f;
-    }
-    else {
-        model->fine_stop_safety_bias_gn =
-            model->fine_stop_safety_bias_gn * 0.98f + learned_safety_bias * 0.02f;
-    }
-    model->fine_stop_safety_bias_gn =
-        ai_clampf(model->fine_stop_safety_bias_gn, 0.004f, 0.110f);
+    model->fine_stop_safety_bias_gn = ai_clampf(learned_safety_bias, 0.004f, 0.110f);
 
     ai_tuning_clear_legacy_controller_fields_unlocked(model);
 }
@@ -2638,30 +2139,14 @@ static void ai_tuning_sanitize_model_unlocked(ai_profile_model_t* model,
                            0.0f,
                            AI_TUNING_FINE_RECOVERY_SAMPLE_COUNT);
 
-    float production_coarse_tail = isfinite(model->coarse_tail_gn) &&
-                                   model->coarse_tail_gn > 0.0f
-        ? model->coarse_tail_gn
-        : 0.0f;
-    float production_trim_tail = isfinite(model->coarse_trim_tail_gn) &&
-                                 model->coarse_trim_tail_gn > 0.0f
-        ? model->coarse_trim_tail_gn
-        : 0.0f;
-    float production_fine_tail = isfinite(model->fine_tail_gn) &&
-                                 model->fine_tail_gn > 0.0f
-        ? model->fine_tail_gn
-        : 0.0f;
-    float production_recovery_speed = isfinite(model->fine_recovery_speed_rps) &&
-                                      model->fine_recovery_speed_rps > 0.0f
-        ? model->fine_recovery_speed_rps
-        : 0.0f;
-    float production_recovery_flow = isfinite(model->fine_recovery_flow_gps) &&
-                                     model->fine_recovery_flow_gps > 0.0f
-        ? model->fine_recovery_flow_gps
-        : 0.0f;
-    float production_recovery_tail = isfinite(model->fine_recovery_tail_gn) &&
-                                     model->fine_recovery_tail_gn >= 0.0f
-        ? model->fine_recovery_tail_gn
-        : 0.0f;
+    // Rebuild derived fields from saved characterization/calibration every time.
+    // Production observations are consumed separately by the runtime controller.
+    const float production_coarse_tail = 0.0f;
+    const float production_trim_tail = 0.0f;
+    const float production_fine_tail = 0.0f;
+    const float production_recovery_speed = 0.0f;
+    const float production_recovery_flow = 0.0f;
+    const float production_recovery_tail = 0.0f;
 
     if (model->coarse_sample_count > 0) {
         ai_tuning_fit_stage_samples(model->coarse_samples,
@@ -2777,27 +2262,14 @@ static void ai_tuning_sanitize_model_unlocked(ai_profile_model_t* model,
     }
 
     float min_window = ai_tuning_min_fine_window_for_model(model);
-    float base_window = fmaxf(min_window,
-                              fmaxf(model->fine_best_flow_gps * 0.60f +
-                                         fmaxf(model->fine_tail_gn, 0.0f) * 2.0f,
-                                    fmaxf(model->coarse_trim_tail_gn, 0.0f) * 0.35f +
-                                        g_config.noise_margin * 3.0f));
-    if (!isfinite(model->recommended_fine_window_gn) ||
-        model->recommended_fine_window_gn <= 0.0f) {
-        model->recommended_fine_window_gn = base_window;
-    }
+    float desired_window = fmaxf(0.85f, fminf(1.10f, target_weight * 0.025f));
+    model->recommended_fine_window_gn = fmaxf(min_window, desired_window);
     float max_window = fmaxf(1.20f, fminf(1.80f, target_weight * 0.05f));
     model->recommended_fine_window_gn = ai_clampf(model->recommended_fine_window_gn,
                                                   min_window,
                                                   max_window);
 
-    if (!isfinite(model->runtime_bias_gn)) {
-        model->runtime_bias_gn = 0.0f;
-    }
-    float positive_bias_limit = fmaxf(0.18f, fminf(0.30f, target_weight * 0.006f));
-    model->runtime_bias_gn = ai_clampf(model->runtime_bias_gn,
-                                       -0.08f,
-                                       positive_bias_limit);
+    model->runtime_bias_gn = 0.0f;
 
     ai_tuning_sanitize_machine_calibration(model, target_weight);
     if (model->machine.valid) {

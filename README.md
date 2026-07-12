@@ -6,7 +6,7 @@ Public beta firmware for the OpenTrickler Raspberry Pi Pico 2 W / RP2350 control
 
 ## Project Status
 
-- Current beta identity: `2026.07.12-beta.10`
+- Current beta identity: `2026.07.12-beta.11`
 - Supported controller: Raspberry Pi Pico 2 W / RP2350 only
 - Unsupported controller: Raspberry Pi Pico W / RP2040
 - Repository status: public beta, early release
@@ -33,7 +33,7 @@ This branch is based on the OpenTrickler controller firmware, but the ML beta ta
 - Adds AI flow characterization for coarse, trim, fine, and micro-recovery behavior.
 - Adds machine calibration for scale response, settle timing, open-loop flow, and tail behavior.
 - Saves learned models per profile instead of relying only on fixed motor settings.
-- Records runtime observations during normal throws and uses them to refine the saved model.
+- Records runtime observations during normal throws and applies them as temporary phase-specific guards without rewriting characterization.
 - Adds automatic phase-specific safety guards from recent coarse, fast-finish, and recovery results.
 - Adds a motor-off `tail_drain` observation before recovery so powder already in flight is not mistaken for recovery delivery.
 - Adds guarded pulse recovery when recent recovery behavior is overthrow-prone.
@@ -82,20 +82,22 @@ Calibration needs at least three valid coarse and three valid fine samples. When
 
 ### Runtime Learning
 
-During normal production, the firmware observes final error, phase timing, stop weights, recovery motor time, and stall count. Valid observations refine the saved profile model over time.
+During normal production, the firmware observes final error, phase timing, stop weights, recovery delivery, and stall count. These observations drive a rolling runtime controller. Characterization and machine calibration remain stable until the operator explicitly reruns them.
 
 ### Automatic Runtime Safety
 
-Beta 10 removes manual model steering. Runtime evidence now has one authority over production behavior:
+Beta 11 keeps runtime evidence separate from the characterized machine model:
 
 - Stable, accurate history may tighten a stop guard.
 - Unstable or overthrow-prone history may widen a guard immediately, but never tighten it.
 - Fast-finish, recovery, and coarse-handoff outcomes are evaluated separately.
 - Complete powder arrival after fine stop is included in the fast-finish tail guard.
+- Powered coarse top-up is removed; the controller observes the complete motor-off coarse tail before fine control begins.
 - Near-target underthrows wait through a calibrated motor-off tail-drain period before recovery starts.
-- Recovery changes to bounded pulses when its recent overthrow rate is unsafe.
+- Recovery uses measured delivered flow to calculate bounded approach and micro doses.
+- No-progress pulses increase dose within an eight-pulse and 15-second recovery bound.
 
-The learned production motor speeds remain unchanged while these guards are active. This preserves the fast transport strategy and spends additional time only near a risky handoff or finish.
+Characterized production motor speeds remain unchanged while these guards are active. Runtime throws update only the rolling observation window, preventing production noise from drifting the saved characterization.
 
 ### Full AI Tuning Reference
 

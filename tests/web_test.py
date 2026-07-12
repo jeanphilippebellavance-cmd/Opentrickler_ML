@@ -120,7 +120,7 @@ def rest_servo_gate_config():
 
 @app.route('/rest/system_control')
 def rest_system_control():
-    return {"s0":"8381FFF","s1":"2026.07.12-beta.10","s2":"test-build","s3":"Debug","s4":False,"s5":False,"s6":False}
+    return {"s0":"8381FFF","s1":"2026.07.12-beta.11","s2":"test-build","s3":"Debug","s4":False,"s5":False,"s6":False}
 
 
 def saved_ai_model():

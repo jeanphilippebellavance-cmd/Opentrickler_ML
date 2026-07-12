@@ -128,7 +128,7 @@ typedef struct {
     float fine_micro_tail_confidence;
     float fine_stop_safety_bias_gn;
     // Reserved to keep revision 14 flash records byte-compatible with beta9.
-    // Beta10 ignores and clears the former manual override values.
+    // Reserved to preserve the history layout after manual overrides were removed.
     float reserved_controller_v1[6];
     uint8_t fine_tube_profile;
     uint8_t reserved_controller_flags;
@@ -170,6 +170,7 @@ typedef struct {
     uint8_t fast_finish_tail_count;
     uint8_t recovery_phase_count;
     uint8_t coarse_late_count;
+    uint8_t recovery_flow_count;
 
     float coarse_tail_mean_gn;
     float coarse_tail_sd_gn;
@@ -188,6 +189,8 @@ typedef struct {
     float median_total_time_ms;
     float recovery_use_rate;
     float median_recovery_motor_ms;
+    float recovery_flow_p25_gps;
+    float recovery_flow_median_gps;
     float over_rate;
     float under_rate;
     float fast_finish_over_rate;

@@ -1,5 +1,16 @@
 # Firmware Changelog
 
+## 2026.07.12-beta.11 - Passive Coarse Settle And Measured Recovery
+
+- Removed powered coarse top-up from production throws after beta10 used it on every RL17 throw and frequently landed over target before fine control.
+- Added a complete `coarse_settle` motor-off observation using calibrated coarse settle timing.
+- Stopped production observations from rewriting characterization, calibration, tail, handoff, and runtime-bias fields.
+- Made recent production percentiles the authority for temporary fine-stop guards once sufficient evidence exists.
+- Added effective recovery-flow P25 and median statistics from the rolling observation window.
+- Replaced continuous/repeated micro recovery with bounded three-zone measured doses.
+- Added no-progress dose escalation with an eight-pulse and 15-second recovery bound.
+- Added recovery pulse-count telemetry for direct validation of the new retry bound.
+
 ## 2026.07.12-beta.10 - Automatic Finish Safety
 
 - Removed manual Faster, Safer, Fine Finish Faster, Bulk Closer, and Undo steering controls.
