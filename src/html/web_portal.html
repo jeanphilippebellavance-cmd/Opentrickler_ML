@@ -1135,15 +1135,16 @@
                     <!-- Firmware Update Page -->
                     <section class="settings-page" id="settings-firmware-update" name="Firmware Update" style="display: none;">
                         <div class="grid grid-cols-1 gap-4">
-                            <div class="alert alert-info">
-                                <span>OTA currently stages and verifies firmware over WiFi. Applying the staged image requires one future OTA bootloader transition build.</span>
-                            </div>
-
                             <div class="stats stats-vertical shadow">
                                 <div class="stat">
                                     <div class="stat-title">OTA Support</div>
                                     <div id="otaSupportStat" class="stat-value text-lg">Unknown</div>
-                                    <div id="otaSupportDesc" class="stat-desc">Refresh status to inspect flash layout.</div>
+                                    <div id="otaSupportDesc" class="stat-desc">Refresh status to inspect the device.</div>
+                                </div>
+                                <div class="stat">
+                                    <div class="stat-title">Install State</div>
+                                    <div id="otaBootStat" class="stat-value text-lg">Unknown</div>
+                                    <div id="otaBootDesc" class="stat-desc">No data loaded yet.</div>
                                 </div>
                                 <div class="stat">
                                     <div class="stat-title">Staged Firmware</div>
@@ -1154,16 +1155,29 @@
 
                             <div class="card bg-base-200">
                                 <div class="card-body">
-                                    <h3 class="card-title">Upload From This PC</h3>
-                                    <p class="text-sm">After building, upload the binary from PowerShell:</p>
-                                    <pre class="text-xs whitespace-pre-wrap bg-base-300 rounded-box p-3">python tools/ota_upload.py --host &lt;device-ip-or-hostname&gt; --bin build-pico2w-release/app.bin --apply</pre>
-                                    <p class="text-sm">Use the UF2 only for USB flashing. OTA staging uses the companion app.bin because it is the raw flash image.</p>
+                                    <h3 class="card-title">Upload New Firmware</h3>
+                                    <p class="text-sm">Select the <b>app.bin</b> produced by the firmware build (not the UF2). The image is uploaded, verified, and installed by the bootloader on reboot. If the new firmware fails to start, the bootloader retries three times and then enters USB recovery (BOOTSEL).</p>
+                                    <input type="file" id="otaFileInput" accept=".bin" class="file-input file-input-bordered w-full">
+                                    <progress id="otaProgressBar" class="progress progress-primary w-full" value="0" max="100" style="display: none;"></progress>
+                                    <div id="otaPhaseText" class="text-sm"></div>
+                                    <div class="flex gap-2">
+                                        <button id="otaUploadButton" class="btn btn-primary" onclick="otaStartUpload()">Upload &amp; Install</button>
+                                        <button id="otaCancelButton" class="btn" onclick="otaCancelUpload()" style="display: none;">Cancel</button>
+                                    </div>
+                                    <p class="text-xs opacity-70">Devices on firmware beta 11 or earlier must be USB-flashed once with app.uf2 (it carries the bootloader) before web updates work. Never upload this build's app.bin through an older device's OTA page.</p>
+                                </div>
+                            </div>
+
+                            <div class="card bg-base-200">
+                                <div class="card-body">
+                                    <h3 class="card-title">Command Line Alternative</h3>
+                                    <pre class="text-xs whitespace-pre-wrap bg-base-300 rounded-box p-3">python tools/ota_upload.py --host &lt;device-ip-or-hostname&gt; --bin build-pico2w-release/app.bin --apply --wait-for-boot</pre>
                                 </div>
                             </div>
 
                             <div class="flex gap-2">
                                 <button class="btn btn-neutral" onclick="otaRefreshStatus()">Refresh OTA Status</button>
-                                <button class="btn btn-warning" onclick="otaApplyStaged()">Apply Staged Firmware</button>
+                                <button class="btn btn-warning" onclick="otaApplyStaged()">Install Staged Firmware</button>
                             </div>
 
                             <pre id="otaStatusText" class="text-xs whitespace-pre-wrap bg-base-200 rounded-box p-3">OTA status not loaded.</pre>
@@ -2433,6 +2447,8 @@
         const statusText = document.getElementById("otaStatusText");
         const supportStat = document.getElementById("otaSupportStat");
         const supportDesc = document.getElementById("otaSupportDesc");
+        const bootStat = document.getElementById("otaBootStat");
+        const bootDesc = document.getElementById("otaBootDesc");
         const stagedStat = document.getElementById("otaStagedStat");
         const stagedDesc = document.getElementById("otaStagedDesc");
 
@@ -2443,9 +2459,21 @@
 
             supportStat.innerText = data.supported ? "Ready" : "Not Available";
             supportStat.className = "stat-value text-lg " + (data.supported ? "text-success" : "text-error");
-            supportDesc.innerText = data.apply_supported
-                ? "WiFi upload and apply are available."
-                : "WiFi upload is available; apply needs a transition firmware.";
+            supportDesc.innerText = data.bootloader_present
+                ? "Bootloader-managed install with USB recovery."
+                : "WiFi upload is available; apply needs the bootloader.";
+
+            const bootLabels = {
+                none: ["Idle", "No install in progress."],
+                pending: ["Install Pending", "The bootloader installs the staged image on the next reboot."],
+                trying: ["Trial Boot", "This boot has not been confirmed yet."],
+                confirmed: ["Confirmed", "The last installed firmware booted successfully."],
+            };
+            const bootInfo = bootLabels[data.boot_state] || bootLabels.none;
+            bootStat.innerText = bootInfo[0];
+            bootStat.className = "stat-value text-lg " +
+                (data.boot_state === "confirmed" ? "text-success" : "");
+            bootDesc.innerText = bootInfo[1];
 
             stagedStat.innerText = data.metadata_valid ? "Verified" : "Empty";
             stagedStat.className = "stat-value text-lg " + (data.metadata_valid ? "text-success" : "text-warning");
@@ -2454,9 +2482,11 @@
                 : "No verified firmware image staged.";
 
             statusText.innerText = JSON.stringify(data, null, 2);
+            return data;
         }
         catch (e) {
             statusText.innerText = "Failed to read OTA status: " + e.message;
+            return null;
         }
     }
 
@@ -2464,12 +2494,226 @@
         try {
             const response = await fetch("/rest/ota_apply");
             const data = await response.json();
-            await otaRefreshStatus();
-            alert(data.message || data.last_error || JSON.stringify(data));
+            if (!data.success) {
+                await otaRefreshStatus();
+                alert(data.message || data.last_error || JSON.stringify(data));
+                return;
+            }
+            otaSetPhase("Installing: device is rebooting into the bootloader…", false);
+            await otaTrackInstall(null);
         }
         catch (e) {
             alert("Apply request did not return cleanly. If the device rebooted, wait a few seconds and refresh. Error: " + e.message);
         }
+    }
+
+    // CRC32 (poly 0xEDB88320), matching the firmware's OTA verification.
+    let otaCrcTable = null;
+    function otaCrc32(bytes) {
+        if (!otaCrcTable) {
+            otaCrcTable = new Uint32Array(256);
+            for (let n = 0; n < 256; n++) {
+                let c = n;
+                for (let k = 0; k < 8; k++) {
+                    c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+                }
+                otaCrcTable[n] = c >>> 0;
+            }
+        }
+        let crc = 0xFFFFFFFF;
+        for (let i = 0; i < bytes.length; i++) {
+            crc = otaCrcTable[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+        }
+        return (crc ^ 0xFFFFFFFF) >>> 0;
+    }
+
+    const OTA_CHUNK_BYTES = 512;
+    const otaUploadState = { running: false, cancel: false };
+
+    function otaSetPhase(message, isError) {
+        const phaseText = document.getElementById("otaPhaseText");
+        phaseText.innerText = message;
+        phaseText.className = "text-sm " + (isError ? "text-error" : "");
+    }
+
+    function otaSetUploadUi(running) {
+        otaUploadState.running = running;
+        document.getElementById("otaUploadButton").disabled = running;
+        document.getElementById("otaCancelButton").style.display = running ? "" : "none";
+        document.getElementById("otaProgressBar").style.display = running ? "" : "none";
+        document.getElementById("otaFileInput").disabled = running;
+    }
+
+    function otaCancelUpload() {
+        otaUploadState.cancel = true;
+        otaSetPhase("Cancelling…", false);
+    }
+
+    function otaChunkHex(bytes, start, end) {
+        let hex = "";
+        for (let i = start; i < end; i++) {
+            hex += bytes[i].toString(16).padStart(2, "0");
+        }
+        return hex;
+    }
+
+    async function otaRestCall(uri) {
+        const response = await fetch(uri);
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.message || data.last_error || "device rejected the request");
+        }
+        return data;
+    }
+
+    async function otaCurrentVersion() {
+        try {
+            const response = await fetch("/rest/system_control");
+            if (!response.ok) return null;
+            const data = await response.json();
+            return data.s1 || null;
+        }
+        catch (e) {
+            return null;
+        }
+    }
+
+    async function otaStartUpload() {
+        if (otaUploadState.running) return;
+
+        const fileInput = document.getElementById("otaFileInput");
+        const progressBar = document.getElementById("otaProgressBar");
+        if (!fileInput.files || fileInput.files.length === 0) {
+            alert("Choose the app.bin file from the firmware build first.");
+            return;
+        }
+
+        const file = fileInput.files[0];
+        if (file.name.toLowerCase().endsWith(".uf2")) {
+            alert("That is a UF2 file. OTA needs app.bin; UF2 files are only for USB BOOTSEL flashing.");
+            return;
+        }
+
+        otaUploadState.cancel = false;
+        otaSetUploadUi(true);
+        progressBar.value = 0;
+
+        try {
+            otaSetPhase("Reading file…", false);
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            if (bytes.length < 1024) throw new Error("file is too small to be firmware");
+
+            const isUf2 = bytes[0] === 0x55 && bytes[1] === 0x46 && bytes[2] === 0x32 && bytes[3] === 0x0A;
+            const isElf = bytes[0] === 0x7F && bytes[1] === 0x45 && bytes[2] === 0x4C && bytes[3] === 0x46;
+            if (isUf2 || isElf) throw new Error("this file is a UF2/ELF container; upload app.bin instead");
+
+            // Vector sanity: word 0 = initial stack pointer (SRAM), word 1 =
+            // reset handler inside the app slot at 0x10008000. Rejects
+            // app.bin files built for the pre-bootloader layout.
+            const view = new DataView(bytes.buffer);
+            const initialSp = view.getUint32(0, true);
+            const resetVector = view.getUint32(4, true);
+            if (initialSp < 0x20000000 || initialSp > 0x20082000) {
+                throw new Error("file does not look like RP2350 firmware (bad stack pointer)");
+            }
+            if (resetVector <= 0x10008000 || resetVector >= 0x101FE000) {
+                throw new Error("this app.bin is built for the pre-bootloader layout and cannot be installed");
+            }
+
+            otaSetPhase("Checking device…", false);
+            const status = await otaRestCall("/rest/ota_status");
+            if (!status.supported) throw new Error("OTA is not available on this device");
+            if (bytes.length > status.capacity_bytes || bytes.length > status.primary_limit_bytes) {
+                throw new Error(`file is ${bytes.length} bytes but the device limit is ` +
+                                `${Math.min(status.capacity_bytes, status.primary_limit_bytes)}`);
+            }
+            const oldVersion = await otaCurrentVersion();
+
+            otaSetPhase("Computing checksum…", false);
+            const crc = otaCrc32(bytes);
+            const crcHex = "0x" + crc.toString(16).toUpperCase().padStart(8, "0");
+
+            await otaRestCall(`/rest/ota_begin?size=${bytes.length}&crc32=${crcHex}`);
+
+            for (let offset = 0; offset < bytes.length; offset += OTA_CHUNK_BYTES) {
+                if (otaUploadState.cancel) {
+                    await fetch("/rest/ota_abort");
+                    otaSetPhase("Upload cancelled.", false);
+                    otaSetUploadUi(false);
+                    await otaRefreshStatus();
+                    return;
+                }
+
+                const end = Math.min(offset + OTA_CHUNK_BYTES, bytes.length);
+                await otaRestCall(`/rest/ota_chunk?offset=${offset}&data=${otaChunkHex(bytes, offset, end)}`);
+
+                const percent = Math.floor((end / bytes.length) * 100);
+                progressBar.value = percent;
+                otaSetPhase(`Uploading… ${percent}% (${end} / ${bytes.length} bytes)`, false);
+            }
+
+            otaSetPhase("Verifying uploaded image…", false);
+            await otaRestCall("/rest/ota_finalize");
+
+            otaSetPhase("Installing: device is rebooting into the bootloader…", false);
+            try {
+                await otaRestCall("/rest/ota_apply");
+            }
+            catch (e) {
+                // A dropped connection here usually means the reboot began.
+                console.log("apply response not received; assuming reboot:", e);
+            }
+
+            await otaTrackInstall(oldVersion);
+        }
+        catch (e) {
+            otaSetPhase("Update failed: " + e.message, true);
+            try { await fetch("/rest/ota_abort"); } catch (_) { /* device may be unreachable */ }
+            otaSetUploadUi(false);
+            await otaRefreshStatus();
+            return;
+        }
+
+        otaSetUploadUi(false);
+    }
+
+    // Poll through the install reboot until the new firmware confirms its
+    // first boot (or the poll times out).
+    async function otaTrackInstall(oldVersion) {
+        const deadline = Date.now() + 120000;
+        let sawDevice = false;
+
+        while (Date.now() < deadline) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            let data = null;
+            try {
+                const response = await fetch("/rest/ota_status");
+                if (!response.ok) continue;
+                data = await response.json();
+            }
+            catch (e) {
+                continue;  // still rebooting / installing
+            }
+
+            sawDevice = true;
+            if (data.boot_state === "confirmed" || data.boot_state === "none") {
+                const newVersion = await otaCurrentVersion();
+                const versionText = newVersion
+                    ? (oldVersion && oldVersion !== newVersion
+                        ? `${oldVersion} → ${newVersion}`
+                        : newVersion)
+                    : "unknown version";
+                otaSetPhase(`Update complete: device is running ${versionText}.`, false);
+                await otaRefreshStatus();
+                return;
+            }
+            otaSetPhase(`Device is back (${data.boot_state}); waiting for boot confirmation…`, false);
+        }
+
+        otaSetPhase(sawDevice
+            ? "Timed out waiting for boot confirmation; refresh the status manually."
+            : "Device did not come back within 2 minutes. If it failed to boot three times it is now in USB recovery (BOOTSEL): flash app.uf2 over USB.", true);
     }
 
     function debounce(callback, delay) {

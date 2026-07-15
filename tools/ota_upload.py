@@ -15,6 +15,14 @@ from urllib.request import urlopen
 
 DEFAULT_CHUNK_SIZE = 512
 
+# Vector sanity limits for app.bin images built for the bootloader layout:
+# word 0 = initial stack pointer (SRAM), word 1 = reset handler inside the
+# app slot at 0x10008000 (see src/ota_layout.h).
+SRAM_BASE = 0x20000000
+SRAM_END = 0x20082000
+APP_SLOT_BASE = 0x10008000
+APP_SLOT_END = 0x101FE000
+
 
 def request_json(host: str, path: str, params: dict[str, object] | None = None, timeout: float = 15.0) -> dict:
     query = ""
@@ -35,7 +43,75 @@ def require_success(data: dict, step: str) -> None:
         raise RuntimeError(f"{step} failed: {message}")
 
 
-def upload(host: str, firmware_bin: Path, chunk_size: int, apply: bool) -> None:
+def check_image_vectors(image: bytes, force: bool) -> None:
+    """Reject images that are not linked for the bootloader app slot.
+
+    An app.bin built for the pre-bootloader layout has its reset vector
+    below 0x10008000; installing it would leave the device unbootable
+    until USB recovery.
+
+    Args:
+        image: Raw firmware image bytes.
+        force: Skip the check when True (--force).
+
+    Raises:
+        RuntimeError: If the vectors look wrong and force is False.
+    """
+    if force or len(image) < 8:
+        return
+
+    initial_sp = int.from_bytes(image[0:4], "little")
+    reset_vector = int.from_bytes(image[4:8], "little")
+    if initial_sp < SRAM_BASE or initial_sp > SRAM_END:
+        raise RuntimeError(
+            f"image stack pointer 0x{initial_sp:08X} is not in SRAM; "
+            "this does not look like RP2350 firmware (use --force to override)"
+        )
+    if not APP_SLOT_BASE < reset_vector < APP_SLOT_END:
+        raise RuntimeError(
+            f"image reset vector 0x{reset_vector:08X} is outside the app slot; "
+            "this app.bin is built for the pre-bootloader layout and would not boot "
+            "(use --force to override)"
+        )
+
+
+def wait_for_boot(host: str, timeout_s: float = 180.0) -> None:
+    """Poll the device through its install reboot until the boot confirms.
+
+    Args:
+        host: OpenTrickler host or IP.
+        timeout_s: Overall polling budget in seconds.
+
+    Raises:
+        RuntimeError: If the device never confirms within the timeout.
+    """
+    deadline = time.monotonic() + timeout_s
+    print("Waiting for the bootloader install and first boot...")
+
+    while time.monotonic() < deadline:
+        time.sleep(2.0)
+        try:
+            status = request_json(host, "/rest/ota_status", timeout=5.0)
+        except (OSError, RuntimeError):
+            continue  # device is rebooting / installing
+
+        boot_state = status.get("boot_state", "none")
+        if boot_state in ("confirmed", "none"):
+            try:
+                system = request_json(host, "/rest/system_control", timeout=5.0)
+                print(f"Boot confirmed; device reports version {system.get('s1')}.")
+            except (OSError, RuntimeError):
+                print("Boot confirmed.")
+            return
+        print(f"\rDevice is back, boot_state={boot_state}...", end="")
+
+    raise RuntimeError(
+        f"device did not confirm the new firmware within {timeout_s:.0f}s; "
+        "if it failed to boot three times it is now in USB recovery (BOOTSEL)"
+    )
+
+
+def upload(host: str, firmware_bin: Path, chunk_size: int, apply: bool, force_legacy: bool) -> None:
     image = firmware_bin.read_bytes()
     crc = binascii.crc32(image) & 0xFFFFFFFF
 
@@ -49,6 +125,13 @@ def upload(host: str, firmware_bin: Path, chunk_size: int, apply: bool) -> None:
         raise RuntimeError(f"device does not support OTA staging: {status.get('last_error') or status}")
     if apply and not status.get("apply_supported", False):
         raise RuntimeError("device can stage firmware but cannot apply it yet; USB-flash the transition firmware first")
+    if apply and not status.get("bootloader_present", False) and not force_legacy:
+        raise RuntimeError(
+            "device firmware predates the OTA bootloader; installing this app.bin over "
+            "its legacy OTA would leave it unbootable until USB recovery. Flash app.uf2 "
+            "over USB (BOOTSEL) once to migrate, or pass --force-legacy if you are "
+            "deliberately uploading a matching legacy image"
+        )
     if len(image) > int(status.get("primary_limit_bytes", 0)):
         raise RuntimeError(
             f"firmware image is too large for primary slot "
@@ -104,7 +187,22 @@ def main() -> int:
         help="Firmware .bin path, not .uf2",
     )
     parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE, help="Upload chunk size in bytes")
-    parser.add_argument("--apply", action="store_true", help="Ask the device to apply after staging")
+    parser.add_argument("--apply", action="store_true", help="Ask the device to install after staging")
+    parser.add_argument(
+        "--wait-for-boot",
+        action="store_true",
+        help="After --apply, poll through the reboot until the new firmware confirms its first boot",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Skip the local image vector sanity check",
+    )
+    parser.add_argument(
+        "--force-legacy",
+        action="store_true",
+        help="Allow --apply against a device without the OTA bootloader (dangerous with new images)",
+    )
     args = parser.parse_args()
 
     firmware_bin = Path(args.firmware_bin)
@@ -114,7 +212,10 @@ def main() -> int:
         parser.error("--chunk-size must be 256 or 512 bytes")
 
     try:
-        upload(args.host, firmware_bin, args.chunk_size, args.apply)
+        check_image_vectors(firmware_bin.read_bytes(), args.force)
+        upload(args.host, firmware_bin, args.chunk_size, args.apply, args.force_legacy)
+        if args.apply and args.wait_for_boot:
+            wait_for_boot(args.host)
     except KeyboardInterrupt:
         print("\nInterrupted; asking device to abort OTA upload...")
         try:

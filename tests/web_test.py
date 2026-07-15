@@ -10,7 +10,8 @@ Dependencies from pip:
 """
 
 import json
-from flask import Flask, send_from_directory
+import time
+from flask import Flask, request, send_from_directory
 import os
 
 
@@ -120,7 +121,168 @@ def rest_servo_gate_config():
 
 @app.route('/rest/system_control')
 def rest_system_control():
-    return {"s0":"8381FFF","s1":"2026.07.12-beta.11","s2":"test-build","s3":"Debug","s4":False,"s5":False,"s6":False}
+    if ota_rebooting():
+        return "rebooting", 503
+    return {"s0":"8381FFF","s1":OTA_STATE["version"],"s2":"test-build","s3":"Debug","s4":False,"s5":False,"s6":False}
+
+
+# --- OTA endpoint mocks -----------------------------------------------------
+#
+# Simulates the bootloader-managed OTA state machine so the web portal
+# upload UI can be exercised without hardware:
+#   session (begin/chunk/finalize/abort) -> apply -> simulated reboot window
+#   (503 responses) -> boot_state trying -> confirmed with a bumped version.
+#
+# Environment knobs:
+#   WEB_TEST_OTA_FAIL_OFFSET  chunk offset that fails once (default: none)
+#   WEB_TEST_OTA_REBOOT_S     simulated reboot duration in seconds (default 6)
+#   WEB_TEST_OTA_APPLY_RESULT confirmed | trying | bootsel (default confirmed)
+
+OTA_MAX_IMAGE = 0x1F6000
+
+OTA_STATE = {
+    "version": "2026.07.12-beta.11",
+    "fail_offset": int(os.environ.get("WEB_TEST_OTA_FAIL_OFFSET", "-1")),
+    "fail_armed": True,
+    "reboot_seconds": float(os.environ.get("WEB_TEST_OTA_REBOOT_S", "6")),
+    "apply_result": os.environ.get("WEB_TEST_OTA_APPLY_RESULT", "confirmed"),
+    "session_active": False,
+    "session_verified": False,
+    "expected_size": 0,
+    "received_size": 0,
+    "expected_crc32": 0,
+    "boot_state": "none",
+    "reboot_until": 0.0,
+    "trying_polls": 0,
+}
+
+
+def ota_rebooting():
+    """True while the mock is inside its simulated reboot window."""
+    if OTA_STATE["reboot_until"] == 0.0:
+        return False
+    if OTA_STATE["apply_result"] == "bootsel":
+        return True  # device never comes back; UI must hit its timeout path
+    return time.monotonic() < OTA_STATE["reboot_until"]
+
+
+def ota_status_payload(success=True, message="ok"):
+    """Build a /rest/ota_status response mirroring the firmware JSON shape.
+
+    Args:
+        success: Value of the JSON "success" field.
+        message: Value of the JSON "message" field.
+
+    Returns:
+        Dict matching the firmware's OTA status fields.
+    """
+    return {
+        "success": success,
+        "message": message,
+        "supported": True,
+        "transport": "rest_get_hex",
+        "apply_supported": True,
+        "bootloader_required": False,
+        "bootloader_present": True,
+        "boot_state": OTA_STATE["boot_state"],
+        "active": OTA_STATE["session_active"],
+        "verified": OTA_STATE["session_verified"],
+        "metadata_valid": OTA_STATE["session_verified"] or OTA_STATE["boot_state"] != "none",
+        "flash_size_bytes": 4 * 1024 * 1024,
+        "primary_limit_bytes": OTA_MAX_IMAGE,
+        "staging_offset": 0x200000,
+        "image_offset": 0x201000,
+        "capacity_bytes": 0x1FF000,
+        "expected_size": OTA_STATE["expected_size"],
+        "received_size": OTA_STATE["received_size"],
+        "expected_crc32": "%08X" % OTA_STATE["expected_crc32"],
+        "actual_crc32": "%08X" % OTA_STATE["expected_crc32"],
+        "staged_size": OTA_STATE["expected_size"] if OTA_STATE["session_verified"] else 0,
+        "staged_crc32": "%08X" % OTA_STATE["expected_crc32"],
+        "last_error": "" if success else message,
+    }
+
+
+@app.route('/rest/ota_status')
+def rest_ota_status():
+    if ota_rebooting():
+        return "rebooting", 503
+
+    if OTA_STATE["boot_state"] == "trying":
+        OTA_STATE["trying_polls"] += 1
+        # The real confirm happens instantly at boot; hold "trying" briefly
+        # so the UI renders that phase, unless the sim forces a stuck trial.
+        if OTA_STATE["apply_result"] != "trying" and OTA_STATE["trying_polls"] >= 2:
+            OTA_STATE["boot_state"] = "confirmed"
+            OTA_STATE["version"] = OTA_STATE["version"] + "+new"
+
+    return ota_status_payload()
+
+
+@app.route('/rest/ota_begin')
+def rest_ota_begin():
+    size = int(request.args.get("size", "0"))
+    if size <= 0 or size > OTA_MAX_IMAGE:
+        return ota_status_payload(False, "image does not fit OTA slots")
+
+    OTA_STATE["session_active"] = True
+    OTA_STATE["session_verified"] = False
+    OTA_STATE["expected_size"] = size
+    OTA_STATE["received_size"] = 0
+    OTA_STATE["expected_crc32"] = int(request.args.get("crc32", "0"), 0)
+    OTA_STATE["fail_armed"] = True
+    return ota_status_payload(True, "OTA upload started")
+
+
+@app.route('/rest/ota_chunk')
+def rest_ota_chunk():
+    if not OTA_STATE["session_active"]:
+        return ota_status_payload(False, "no OTA upload is active")
+
+    offset = int(request.args.get("offset", "-1"))
+    data = request.args.get("data", "")
+    if offset != OTA_STATE["received_size"] or not data:
+        return ota_status_payload(False, "chunk offset rejected")
+
+    if offset == OTA_STATE["fail_offset"] and OTA_STATE["fail_armed"]:
+        OTA_STATE["fail_armed"] = False
+        return ota_status_payload(False, "page program failed")
+
+    OTA_STATE["received_size"] += len(data) // 2
+    return ota_status_payload(True, "chunk accepted")
+
+
+@app.route('/rest/ota_finalize')
+def rest_ota_finalize():
+    if not OTA_STATE["session_active"]:
+        return ota_status_payload(False, "no OTA upload is active")
+    if OTA_STATE["received_size"] != OTA_STATE["expected_size"]:
+        return ota_status_payload(False, "upload is incomplete")
+
+    OTA_STATE["session_active"] = False
+    OTA_STATE["session_verified"] = True
+    return ota_status_payload(True, "image staged and verified")
+
+
+@app.route('/rest/ota_abort')
+def rest_ota_abort():
+    OTA_STATE["session_active"] = False
+    OTA_STATE["session_verified"] = False
+    OTA_STATE["expected_size"] = 0
+    OTA_STATE["received_size"] = 0
+    return ota_status_payload(True, "OTA upload aborted")
+
+
+@app.route('/rest/ota_apply')
+def rest_ota_apply():
+    if not OTA_STATE["session_verified"]:
+        return ota_status_payload(False, "no verified staged firmware is available")
+
+    OTA_STATE["session_verified"] = False
+    OTA_STATE["boot_state"] = "trying"
+    OTA_STATE["trying_polls"] = 0
+    OTA_STATE["reboot_until"] = time.monotonic() + OTA_STATE["reboot_seconds"]
+    return ota_status_payload(True, "install scheduled; device reboots into the bootloader")
 
 
 def saved_ai_model():
